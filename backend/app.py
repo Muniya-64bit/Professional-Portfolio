@@ -3,6 +3,10 @@ from flask import Flask, jsonify
 
 app = Flask(__name__)
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "Portfolio API", "version": "1.0.0"})
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
