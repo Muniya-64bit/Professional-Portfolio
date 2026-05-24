@@ -1,0 +1,36 @@
+:root {
+  --bg: #f7f4ef;
+  --text: #1e1b16;
+  --accent: #c49a5a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Georgia", "Times New Roman", serif;
+  background: radial-gradient(circle at top, #fff9f0 0%, #f2e7d8 45%, #e6d1b6 100%);
+  color: var(--text);
+}
+
+.page {
+  min-height: 100vh;
+  padding: 4rem 10vw;
+  display: grid;
+  gap: 2rem;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 4vw, 4rem);
+  margin-bottom: 0.5rem;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(30, 27, 22, 0.15);
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 20px 40px rgba(30, 27, 22, 0.08);
+}
