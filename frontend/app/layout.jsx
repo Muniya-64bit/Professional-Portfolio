@@ -1,14 +1,19 @@
 import "./globals.css";
+import { AuthProvider } from "./context/AuthContext";
 
 export const metadata = {
-  title: "Professional Portfolio",
-  description: "Portfolio built with Next.js and Flask"
+  title: "KVPL — Tea Plantation Management",
+  description: "Input & Resource Optimization System for Sri Lankan Tea Plantations"
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }
