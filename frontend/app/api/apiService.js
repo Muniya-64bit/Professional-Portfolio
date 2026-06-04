@@ -131,6 +131,81 @@ export const apiService = {
     }
   },
 
+  // ── Labour Planner ────────────────────────────────────────────────────────
+
+  async _labour(token, method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}/labour${path}`, opts);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
+  },
+
+  getEstates(token) {
+    return this._labour(token, 'GET', '/estates');
+  },
+
+  getLabourPlans(token, { estateId, weekStart } = {}) {
+    const q = new URLSearchParams();
+    if (estateId)  q.set('estate_id',  estateId);
+    if (weekStart) q.set('week_start', weekStart);
+    return this._labour(token, 'GET', `/plans${q.toString() ? '?' + q : ''}`);
+  },
+
+  getLabourPlan(token, planId) {
+    return this._labour(token, 'GET', `/plans/${planId}`);
+  },
+
+  createLabourPlan(token, data) {
+    return this._labour(token, 'POST', '/plans', data);
+  },
+
+  updateLabourPlan(token, planId, data) {
+    return this._labour(token, 'PUT', `/plans/${planId}`, data);
+  },
+
+  overrideAssignment(token, assignmentId, data) {
+    return this._labour(token, 'PUT', `/assignments/${assignmentId}`, data);
+  },
+
+  addEmployeeOverride(token, assignmentId, data) {
+    return this._labour(token, 'POST', `/assignments/${assignmentId}/employee-overrides`, data);
+  },
+
+  getEmployees(token, { estateId, groupId, skillType } = {}) {
+    const q = new URLSearchParams();
+    if (estateId)  q.set('estate_id',  estateId);
+    if (groupId)   q.set('group_id',   groupId);
+    if (skillType) q.set('skill_type', skillType);
+    return this._labour(token, 'GET', `/employees${q.toString() ? '?' + q : ''}`);
+  },
+
+  createEmployee(token, data) {
+    return this._labour(token, 'POST', '/employees', data);
+  },
+
+  updateEmployee(token, employeeId, data) {
+    return this._labour(token, 'PUT', `/employees/${employeeId}`, data);
+  },
+
+  getWorkerGroups(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._labour(token, 'GET', `/groups${q}`);
+  },
+
+  updateGroupMember(token, groupId, employeeId, action) {
+    return this._labour(token, 'POST', `/groups/${groupId}/members`, { employee_id: employeeId, action });
+  },
+
+  getRotation(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._labour(token, 'GET', `/rotation${q}`);
+  },
+
   // Helper: Decode JWT token to get expiration time
   getTokenExpiration(token) {
     try {

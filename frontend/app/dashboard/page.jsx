@@ -1,6 +1,7 @@
 'use client';
 
 import { useAuth } from '../context/AuthContext';
+import { apiService } from '../api/apiService';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
@@ -441,70 +442,529 @@ function FertilizerTab() {
 
 /* ── Tab: Labour ──────────────────────────────────────────────────────── */
 function LabourTab() {
-  const totalWorkers = labourData.reduce((s, r) => s + r.workers, 0);
-  const totalTarget = labourData.reduce((s, r) => s + r.target, 0);
-  const totalActual = labourData.reduce((s, r) => s + r.actual, 0);
-  const overallEff = ((totalActual / totalTarget) * 100).toFixed(1);
+  const { token } = useAuth();
+  const [view, setView]           = useState('week');      // 'week' | 'rotation' | 'employees'
+  const [estates, setEstates]     = useState([]);
+  const [estateId, setEstateId]   = useState('');
+  const [plan, setPlan]           = useState(null);        // current week plan
+  const [rotation, setRotation]   = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [groups, setGroups]       = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
+
+  // Modal state for add-employee
+  const [showAddEmp, setShowAddEmp]   = useState(false);
+  const [empForm, setEmpForm]         = useState({
+    employee_code: '', full_name: '', gender: 'F',
+    hire_date: new Date().toISOString().slice(0, 10),
+    employment_type: 'permanent', skill_type: 'plucker',
+    daily_wage_lkr: '', group_id: '',
+  });
+  const [empSaving, setEmpSaving]     = useState(false);
+  const [empError, setEmpError]       = useState('');
+
+  // Current week's Monday
+  const weekStart = (() => {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff)).toISOString().slice(0, 10);
+  })();
+
+  // Load estates on mount
+  useEffect(() => {
+    if (!token) return;
+    apiService.getEstates(token)
+      .then(data => {
+        setEstates(data);
+        if (data.length > 0) setEstateId(data[0].id);
+      })
+      .catch(() => {});
+  }, [token]);
+
+  // Load view data when estate or view tab changes
+  useEffect(() => {
+    if (!token || !estateId) return;
+    setError('');
+    setLoading(true);
+
+    const load = async () => {
+      try {
+        if (view === 'week') {
+          const plans = await apiService.getLabourPlans(token, { estateId, weekStart });
+          if (plans.length > 0) {
+            const detail = await apiService.getLabourPlan(token, plans[0].id);
+            setPlan(detail);
+          } else {
+            setPlan(null);
+          }
+        } else if (view === 'rotation') {
+          const r = await apiService.getRotation(token, estateId);
+          setRotation(r.length > 0 ? r[0] : null);
+        } else if (view === 'employees') {
+          const [emps, grps] = await Promise.all([
+            apiService.getEmployees(token, { estateId }),
+            apiService.getWorkerGroups(token, estateId),
+          ]);
+          setEmployees(emps);
+          setGroups(grps);
+        }
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [token, estateId, view, weekStart]);
+
+  const handleAddEmployee = async () => {
+    if (!empForm.employee_code || !empForm.full_name || !empForm.hire_date) {
+      setEmpError('Code, full name and hire date are required.');
+      return;
+    }
+    setEmpSaving(true); setEmpError('');
+    try {
+      await apiService.createEmployee(token, { ...empForm, estate_id: estateId });
+      setShowAddEmp(false);
+      setEmpForm({
+        employee_code: '', full_name: '', gender: 'F',
+        hire_date: new Date().toISOString().slice(0, 10),
+        employment_type: 'permanent', skill_type: 'plucker',
+        daily_wage_lkr: '', group_id: '',
+      });
+      // Refresh employee list
+      const emps = await apiService.getEmployees(token, { estateId });
+      setEmployees(emps);
+    } catch (e) {
+      setEmpError(e.message);
+    } finally {
+      setEmpSaving(false);
+    }
+  };
+
+  // ── KPIs derived from plan assignments
+  const assignments = plan?.assignments || [];
+  const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
+  const totalTarget   = assignments.reduce((s, a) => s + (a.expected_yield_kg || 0), 0);
+  const totalActual   = assignments.reduce((s, a) => s + (a.actual_yield_kg || 0), 0);
+  const overallEff    = totalTarget > 0 ? ((totalActual / totalTarget) * 100).toFixed(1) : '—';
+
+  const subBtnStyle = (v) => ({
+    padding: '6px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+    fontSize: '0.8125rem', transition: 'all 0.15s',
+    background: view === v ? 'var(--color-primary)' : 'var(--color-surface-2)',
+    color:      view === v ? '#fff' : 'var(--color-text-muted)',
+  });
 
   return (
     <>
-      <div className="kpi-grid">
-        <KpiCard icon="👥" iconBg="kpi-icon-blue"  label="Total Active Workers"    value={totalWorkers} unit="" />
-        <KpiCard icon="🎯" iconBg="kpi-icon-green" label="Production Target (kg)"  value={totalTarget.toLocaleString()} unit="kg" />
-        <KpiCard icon="📦" iconBg="kpi-icon-teal"  label="Actual Output (kg)"      value={totalActual.toLocaleString()} unit="kg" />
-        <KpiCard icon="⚡" iconBg="kpi-icon-amber" label="Overall Efficiency"       value={`${overallEff}%`} unit="" delta={overallEff >= 100 ? -0.5 : 0} />
+      {/* ── Estate selector + sub-nav ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <select
+          value={estateId}
+          onChange={e => setEstateId(e.target.value)}
+          style={{
+            padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)',
+            background: 'var(--color-surface-2)', color: 'var(--color-text)',
+            fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          {estates.length === 0 && <option value="">Loading estates…</option>}
+          {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button style={subBtnStyle('week')}      onClick={() => setView('week')}>This Week</button>
+          <button style={subBtnStyle('rotation')}  onClick={() => setView('rotation')}>Rotation</button>
+          <button style={subBtnStyle('employees')} onClick={() => setView('employees')}>Employees</button>
+        </div>
       </div>
 
-      <div className="table-wrap">
-        <div className="table-header-bar">
-          <div>
-            <div className="table-title">Weekly Labour Allocation</div>
-            <div className="table-subtitle">Block-level worker distribution & production tracking · Week 22</div>
-          </div>
-          <span className="badge badge-neutral">11 blocks</span>
+      {/* ── Error / Loading ── */}
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)',
+                      color: 'var(--color-danger)', marginBottom: 'var(--space-4)', fontSize: '0.875rem' }}>
+          {error}
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Block</th>
-              <th>Estate</th>
-              <th>Workers</th>
-              <th>Target (kg)</th>
-              <th>Actual (kg)</th>
-              <th>Efficiency</th>
-              <th>Progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            {labourData.map(r => {
-              const eff = r.efficiency;
-              const pct = Math.min(100, (r.actual / r.target) * 100);
-              const effColor = eff >= 100 ? 'var(--color-success)' : eff >= 90 ? 'var(--color-warning)' : 'var(--color-danger)';
-              const barClass = eff >= 100 ? 'progress-green' : eff >= 90 ? 'progress-amber' : 'progress-red';
-              return (
-                <tr key={r.block}>
-                  <td style={{ fontWeight: 700, color: 'var(--color-text)' }}>{r.block}</td>
-                  <td style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>{r.estate}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span>👤</span>
-                      <span style={{ fontWeight: 600 }}>{r.workers}</span>
-                    </div>
-                  </td>
-                  <td>{r.target}</td>
-                  <td style={{ fontWeight: 700 }}>{r.actual}</td>
-                  <td style={{ fontWeight: 700, color: effColor }}>{eff}%</td>
-                  <td style={{ minWidth: 120 }}>
-                    <div className="progress-wrap">
-                      <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </td>
+      )}
+      {loading && (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+          Loading…
+        </div>
+      )}
+
+      {/* ── VIEW: This Week ── */}
+      {!loading && view === 'week' && (
+        <>
+          {/* KPI row */}
+          <div className="kpi-grid">
+            <KpiCard icon="👥" iconBg="kpi-icon-blue"  label="Total Workers"         value={totalWorkers || '—'} unit="" />
+            <KpiCard icon="🎯" iconBg="kpi-icon-green" label="Target (kg)"            value={totalTarget ? Math.round(totalTarget).toLocaleString() : '—'} unit="kg" />
+            <KpiCard icon="📦" iconBg="kpi-icon-teal"  label="Actual Output (kg)"     value={totalActual ? Math.round(totalActual).toLocaleString() : '—'} unit="kg" />
+            <KpiCard icon="⚡" iconBg="kpi-icon-amber" label="Overall Efficiency"      value={overallEff === '—' ? '—' : `${overallEff}%`} unit="" />
+          </div>
+
+          {/* Plan meta row */}
+          {plan && (
+            <div style={{ display: 'flex', gap: 12, marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
+              <span className="badge badge-neutral">Week starting {plan.week_start}</span>
+              <span className={`badge ${plan.status === 'published' ? 'badge-success' : plan.status === 'completed' ? 'badge-neutral' : 'badge-warning'}`}>
+                {plan.status}
+              </span>
+              {plan.cycle_name && (
+                <span className="badge badge-neutral">
+                  {plan.cycle_name} · Round {plan.current_round}/{plan.total_rounds}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Assignments table */}
+          {!plan ? (
+            <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)',
+                          background: 'var(--color-surface-2)', borderRadius: 12 }}>
+              <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
+              <p>No labour plan for this week yet.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <div className="table-header-bar">
+                <div>
+                  <div className="table-title">Block Assignments — {weekStart}</div>
+                  <div className="table-subtitle">
+                    Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
+                  </div>
+                </div>
+                <span className="badge badge-neutral">{assignments.length} blocks</span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Block</th>
+                    <th>Group</th>
+                    <th>Workers</th>
+                    <th>Target (kg)</th>
+                    <th>Actual (kg)</th>
+                    <th>Efficiency</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignments.map(a => {
+                    const exp = a.expected_yield_kg || 0;
+                    const act = a.actual_yield_kg   || 0;
+                    const eff = exp > 0 ? ((act / exp) * 100) : 0;
+                    const pct = exp > 0 ? Math.min(100, (act / exp) * 100) : 0;
+                    const effColor = act === 0 ? 'var(--color-text-muted)'
+                                   : eff >= 100 ? 'var(--color-success)'
+                                   : eff >= 90  ? 'var(--color-warning)'
+                                   : 'var(--color-danger)';
+                    const barClass = eff >= 100 ? 'progress-green' : eff >= 90 ? 'progress-amber' : 'progress-red';
+                    return (
+                      <tr key={a.id}>
+                        <td style={{ fontWeight: 700, color: 'var(--color-text)' }}>
+                          {a.block_code}
+                          {a.is_manual_override && (
+                            <span title={a.override_reason || 'Manually overridden'}
+                                  style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--color-warning)', fontWeight: 600 }}>
+                              ✎
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: '0.875rem' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name || '—'}</div>
+                          {a.is_manual_override && a.original_group_name && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                              was: {a.original_group_name}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>👤</span>
+                            <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
+                          </div>
+                        </td>
+                        <td>{exp ? Math.round(exp).toLocaleString() : '—'}</td>
+                        <td style={{ fontWeight: 700 }}>{act ? Math.round(act).toLocaleString() : '—'}</td>
+                        <td style={{ fontWeight: 700, color: effColor }}>
+                          {act === 0 ? '—' : `${eff.toFixed(1)}%`}
+                        </td>
+                        <td style={{ minWidth: 120 }}>
+                          <div className="progress-wrap">
+                            {pct > 0 && <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />}
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            a.status === 'completed'   ? 'badge-success' :
+                            a.status === 'in_progress' ? 'badge-warning' :
+                            a.status === 'cancelled'   ? 'badge-danger'  : 'badge-neutral'
+                          }`}>{a.status}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── VIEW: Rotation Matrix ── */}
+      {!loading && view === 'rotation' && (
+        rotation ? (
+          <div className="table-wrap">
+            <div className="table-header-bar">
+              <div>
+                <div className="table-title">{rotation.cycle_name}</div>
+                <div className="table-subtitle">
+                  {rotation.total_rounds}-round cycle · currently on Round {rotation.current_round}
+                </div>
+              </div>
+              <span className="badge badge-neutral">{rotation.total_rounds} rounds</span>
+            </div>
+
+            {/* Progress indicator */}
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {Array.from({ length: rotation.total_rounds }, (_, i) => i + 1).map(rn => (
+                  <div key={rn} style={{
+                    flex: 1, height: 8, borderRadius: 4,
+                    background: rn < rotation.current_round  ? 'var(--color-success)'
+                              : rn === rotation.current_round ? 'var(--color-primary)'
+                              : 'var(--color-surface-2)',
+                    transition: 'background 0.3s',
+                  }} title={`Round ${rn}${rn === rotation.current_round ? ' ← current' : ''}`} />
+                ))}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                Round {rotation.current_round} of {rotation.total_rounds} — {Math.round((rotation.current_round / rotation.total_rounds) * 100)}% through cycle
+              </div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Round</th>
+                  {(rotation.matrix[1] || []).map(b => <th key={b.block_code}>{b.block_code}</th>)}
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {Object.entries(rotation.matrix).sort(([a],[b]) => a - b).map(([rn, cells]) => (
+                  <tr key={rn} style={{
+                    background: parseInt(rn) === rotation.current_round
+                      ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
+                  }}>
+                    <td style={{ fontWeight: 700 }}>
+                      Round {rn}
+                      {parseInt(rn) === rotation.current_round && (
+                        <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
+                      )}
+                    </td>
+                    {cells.map(c => (
+                      <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
+                        <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)',
+                        background: 'var(--color-surface-2)', borderRadius: 12 }}>
+            <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔄</div>
+            <p>No active rotation cycle for this estate.</p>
+          </div>
+        )
+      )}
+
+      {/* ── VIEW: Employees ── */}
+      {!loading && view === 'employees' && (
+        <>
+          {/* Groups summary */}
+          {groups.length > 0 && (
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 'var(--space-5)' }}>
+              {groups.map(g => (
+                <div key={g.id} style={{
+                  padding: '12px 16px', borderRadius: 10, background: 'var(--color-surface-2)',
+                  border: '1px solid var(--color-border)', minWidth: 160,
+                }}>
+                  <div style={{ fontWeight: 700, color: 'var(--color-text)', marginBottom: 4 }}>{g.group_code}</div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{g.group_name}</div>
+                  <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-primary)' }}>
+                      {g.current_headcount}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      / {g.capacity} capacity
+                    </span>
+                  </div>
+                  {g.supervisor_name && (
+                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                      Supervisor: {g.supervisor_name}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="table-wrap">
+            <div className="table-header-bar">
+              <div>
+                <div className="table-title">Field Employees</div>
+                <div className="table-subtitle">{employees.length} active employees</div>
+              </div>
+              <button
+                onClick={() => setShowAddEmp(true)}
+                style={{
+                  padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
+                }}
+              >
+                + Add Employee
+              </button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Name</th>
+                  <th>Group</th>
+                  <th>Role</th>
+                  <th>Type</th>
+                  <th>Wage / day</th>
+                  <th>Hire Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {employees.length === 0 ? (
+                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>
+                    No employees found for this estate.
+                  </td></tr>
+                ) : employees.map(emp => (
+                  <tr key={emp.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.employee_code}</td>
+                    <td style={{ fontWeight: 600 }}>{emp.full_name}</td>
+                    <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>{emp.group_code || '—'}</td>
+                    <td>
+                      <span className={`badge ${emp.skill_type === 'supervisor' ? 'badge-warning' : 'badge-neutral'}`}>
+                        {emp.skill_type}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.employment_type}</td>
+                    <td style={{ fontWeight: 600 }}>
+                      {emp.daily_wage_lkr ? `Rs. ${Number(emp.daily_wage_lkr).toLocaleString()}` : '—'}
+                    </td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.hire_date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* ── Add Employee Modal ── */}
+          {showAddEmp && (
+            <div style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+            }}>
+              <div style={{
+                background: 'var(--color-surface)', borderRadius: 16, padding: 32,
+                width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Add New Employee</div>
+                {empError && (
+                  <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
+                                color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                    {empError}
+                  </div>
+                )}
+                {[
+                  ['employee_code', 'Employee Code', 'text'],
+                  ['full_name',     'Full Name',     'text'],
+                  ['hire_date',     'Hire Date',     'date'],
+                  ['daily_wage_lkr','Daily Wage (LKR)','number'],
+                ].map(([field, label, type]) => (
+                  <div key={field} style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                                    color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                      {label}
+                    </label>
+                    <input
+                      type={type}
+                      value={empForm[field]}
+                      onChange={e => setEmpForm(p => ({ ...p, [field]: e.target.value }))}
+                      style={{
+                        width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+                        border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                        color: 'var(--color-text)', fontSize: '0.875rem',
+                      }}
+                    />
+                  </div>
+                ))}
+                {/* Selects row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+                  {[
+                    ['gender',          'Gender',     [['M','Male'],['F','Female'],['O','Other']]],
+                    ['skill_type',      'Skill',      [['plucker','Plucker'],['supervisor','Supervisor'],['general','General'],['driver','Driver']]],
+                    ['employment_type', 'Employment', [['permanent','Permanent'],['casual','Casual'],['seasonal','Seasonal']]],
+                    ['group_id',        'Group',      [['','— None —'], ...groups.map(g => [g.id, g.group_name])]],
+                  ].map(([field, label, opts]) => (
+                    <div key={field}>
+                      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                                      color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                        {label}
+                      </label>
+                      <select
+                        value={empForm[field]}
+                        onChange={e => setEmpForm(p => ({ ...p, [field]: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '8px 10px', borderRadius: 8,
+                          border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                          color: 'var(--color-text)', fontSize: '0.8125rem',
+                        }}
+                      >
+                        {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button
+                    onClick={() => { setShowAddEmp(false); setEmpError(''); }}
+                    style={{
+                      padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
+                      background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAddEmployee}
+                    disabled={empSaving}
+                    style={{
+                      padding: '8px 20px', borderRadius: 8, border: 'none',
+                      background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600,
+                      opacity: empSaving ? 0.7 : 1,
+                    }}
+                  >
+                    {empSaving ? 'Saving…' : 'Save Employee'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }

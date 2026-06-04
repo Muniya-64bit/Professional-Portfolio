@@ -74,7 +74,7 @@ class MigrationManager:
             return False
         
         try:
-            with open(migration_path, 'r') as f:
+            with open(migration_path, 'r', encoding='utf-8') as f:
                 sql_content = f.read()
             
             print(f"▶️  Running: {migration_file}")

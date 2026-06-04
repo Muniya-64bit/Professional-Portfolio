@@ -8,9 +8,10 @@ load_dotenv()
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from auth import (
-    signup_user, login_user, get_user_profile, token_required, 
+    signup_user, login_user, get_user_profile, token_required,
     verify_token, validate_password_strength, rate_limit
 )
+from labour import labour_bp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+app.register_blueprint(labour_bp)
 
 # Basic routes
 @app.route("/", methods=["GET"])

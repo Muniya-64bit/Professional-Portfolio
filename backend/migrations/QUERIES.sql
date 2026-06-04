@@ -156,56 +156,117 @@ LEFT JOIN water_baseline wb ON w.factory_id = wb.factory_id
 WHERE f.name = 'Kundasale Processing Plant';
 
 -- =============================================================================
--- MODULE 4: LABOUR ALLOCATION OPTIMIZER
+-- MODULE 4: LABOUR ALLOCATION OPTIMIZER (updated schema)
 -- =============================================================================
 
--- Get labour plan for a week
-SELECT 
+-- Weekly labour plan summary with group headcount
+SELECT
     lp.week_start,
-    e.name AS estate,
+    e.name                          AS estate,
     lp.total_workers,
     lp.target_kg,
     lp.status,
-    COUNT(ba.block_id) AS blocks_allocated,
-    SUM(ba.allocated_workers) AS total_allocated,
-    SUM(ba.expected_yield_kg) AS expected_total_yield
+    COUNT(ba.id)                    AS blocks_assigned,
+    SUM(ba.expected_yield_kg)       AS expected_total_yield,
+    SUM(ba.actual_yield_kg)         AS actual_total_yield,
+    rc.cycle_name,
+    rc.current_round                AS rotation_round
 FROM labour_plan lp
-JOIN estate e ON lp.estate_id = e.id
-LEFT JOIN block_allocation ba ON lp.id = ba.labour_plan_id
-WHERE lp.week_start = '2026-01-06'
-GROUP BY lp.id, e.name, lp.week_start, lp.total_workers, lp.target_kg, lp.status;
+JOIN estate e           ON e.id  = lp.estate_id
+LEFT JOIN block_assignment ba ON ba.labour_plan_id = lp.id
+LEFT JOIN rotation_cycle rc   ON rc.estate_id = lp.estate_id AND rc.is_active = TRUE
+WHERE lp.week_start = DATE_TRUNC('week', CURRENT_DATE)::DATE
+GROUP BY lp.id, e.name, lp.week_start, lp.total_workers,
+         lp.target_kg, lp.status, rc.cycle_name, rc.current_round;
 
--- Get block allocation details for a labour plan
-SELECT 
+-- Block assignments for a week: group, workers, yield
+SELECT
     b.block_code,
-    ba.allocated_workers,
+    wg.group_name,
+    wg.capacity                     AS group_size,
+    ba.assignment_date,
+    ba.rotation_round,
+    ba.is_manual_override,
     ba.expected_yield_kg,
     ba.actual_yield_kg,
-    ba.plucking_rounds,
-    ba.productivity_ratio,
-    CASE 
-        WHEN ba.actual_yield_kg > ba.expected_yield_kg THEN '✓ Exceeded'
-        WHEN ba.actual_yield_kg IS NULL THEN 'Pending'
-        ELSE '✗ Below'
-    END AS performance
-FROM block_allocation ba
-JOIN labour_plan lp ON ba.labour_plan_id = lp.id
-JOIN block b ON ba.block_id = b.id
-WHERE lp.week_start = '2026-01-06'
+    ROUND(ba.actual_yield_kg / NULLIF(ba.expected_yield_kg, 0) * 100, 1) AS efficiency_pct,
+    ba.status
+FROM block_assignment ba
+JOIN block b            ON b.id  = ba.block_id
+JOIN worker_group wg    ON wg.id = ba.worker_group_id
+WHERE ba.labour_plan_id = (
+    SELECT id FROM labour_plan lp
+    JOIN estate e ON e.id = lp.estate_id
+    WHERE e.name = 'Kundasale Estate'
+      AND lp.week_start = DATE_TRUNC('week', CURRENT_DATE)::DATE
+)
 ORDER BY b.block_code;
 
--- Calculate productivity metrics
-SELECT 
+-- Rotation matrix: who goes where for all 6 rounds
+SELECT
+    rrb.round_number,
     b.block_code,
-    AVG(ba.allocated_workers) AS avg_workers,
-    AVG(ba.actual_yield_kg) AS avg_actual_yield,
-    AVG(ba.productivity_ratio) AS avg_kg_per_worker_per_day,
-    MAX(ba.actual_yield_kg) AS best_yield,
-    MIN(ba.actual_yield_kg) AS worst_yield
-FROM block_allocation ba
-JOIN block b ON ba.block_id = b.id
+    wg.group_name,
+    CASE WHEN rc.current_round = rrb.round_number THEN 'CURRENT' ELSE '' END AS current_week
+FROM rotation_round_block rrb
+JOIN rotation_cycle rc  ON rc.id  = rrb.rotation_cycle_id
+JOIN block b            ON b.id   = rrb.block_id
+JOIN worker_group wg    ON wg.id  = rrb.worker_group_id
+WHERE rc.cycle_name = 'Kundasale Standard Rotation 2026'
+ORDER BY rrb.round_number, b.block_code;
+
+-- Active employees per group with headcount vs capacity
+SELECT
+    wg.group_code,
+    wg.group_name,
+    wg.capacity,
+    COUNT(wgm.id)                               AS current_headcount,
+    wg.capacity - COUNT(wgm.id)                 AS vacancy,
+    sup.full_name                               AS supervisor
+FROM worker_group wg
+JOIN estate e               ON e.id  = wg.estate_id
+LEFT JOIN worker_group_member wgm ON wgm.group_id   = wg.id AND wgm.is_active = TRUE
+LEFT JOIN employee sup       ON sup.id = wg.supervisor_id
+WHERE e.name = 'Kundasale Estate' AND wg.is_active = TRUE
+GROUP BY wg.group_code, wg.group_name, wg.capacity, sup.full_name
+ORDER BY wg.group_code;
+
+-- Manual override: move a group to a different block
+-- (API will execute this; shown here for reference)
+UPDATE block_assignment
+SET
+    original_group_id  = worker_group_id,     -- save who was supposed to be here
+    worker_group_id    = '<new_group_uuid>',
+    is_manual_override = TRUE,
+    override_reason    = 'Group 2 supervisor absent — swapping with Group 4',
+    overridden_by      = '<manager_user_uuid>',
+    overridden_at      = NOW(),
+    updated_at         = NOW()
+WHERE id = '<block_assignment_uuid>';
+
+-- Manual add/remove individual employee from a block assignment
+-- Add an extra worker
+INSERT INTO employee_day_assignment (block_assignment_id, employee_id, assignment_type, added_by, reason)
+VALUES ('<block_assignment_uuid>', '<employee_uuid>', 'manual_add', '<manager_uuid>', 'Replacing sick colleague');
+
+-- Remove a worker (mark as absent)
+INSERT INTO employee_day_assignment (block_assignment_id, employee_id, assignment_type, added_by, reason)
+VALUES ('<block_assignment_uuid>', '<employee_uuid>', 'manual_remove', '<manager_uuid>', 'Medical leave');
+
+-- Per-block productivity over past 4 weeks
+SELECT
+    b.block_code,
+    COUNT(ba.id)                            AS weeks_plucked,
+    ROUND(AVG(ba.actual_yield_kg), 0)       AS avg_actual_kg,
+    ROUND(AVG(ba.expected_yield_kg), 0)     AS avg_target_kg,
+    ROUND(AVG(ba.actual_yield_kg / NULLIF(ba.expected_yield_kg, 0)) * 100, 1) AS avg_efficiency_pct,
+    SUM(ba.actual_yield_kg)                 AS total_kg_4_weeks
+FROM block_assignment ba
+JOIN block b ON b.id = ba.block_id
+WHERE ba.assignment_date >= CURRENT_DATE - INTERVAL '4 weeks'
+  AND ba.status = 'completed'
 GROUP BY b.block_code
-ORDER BY avg_kg_per_worker_per_day DESC;
+ORDER BY avg_efficiency_pct DESC;
 
 -- =============================================================================
 -- CROSS-MODULE QUERIES
