@@ -11,6 +11,7 @@ PostgreSQL migrations for the KVPL system. Run in order via `migrate.py`.
 | `003_labour_planner_schema.sql` | Labour module: employee, worker_group, rotation_cycle, block_assignment |
 | `004_labour_sample_data.sql` | Kundasale Estate: 90 employees, 6 groups, rotation, current week plan |
 | `005_remaining_estates_sample_data.sql` | Ramboda / Hunasgiriya / Haputale: full labour data + 4 weeks history |
+| `006_ml_yield_prediction.sql` | ML module: block ML columns, block_yield_record, estate_weather, yield_prediction |
 | `QUERIES.sql` | Reference SQL for all modules (not run by migrate.py) |
 
 ## Commands
@@ -48,6 +49,12 @@ python migrate.py rollback   # drop everything (dev only)
 - `labour_plan` — weekly plan header
 - `block_assignment` — daily group→block assignment (rotation or manual override)
 - `employee_day_assignment` — individual add/remove overrides per day
+
+### ML Yield Prediction
+- `block_yield_record` — monthly block-level yield records
+- `estate_weather` — monthly weather data per estate (NASA POWER)
+- `yield_prediction` — ML model predicted yield output per block per month
+- `block.elevation_m`, `block.bush_age_yrs`, `block.zone` — new ML feature columns added to block table
 
 ### Audit
 - `audit_log` — cross-module change history
