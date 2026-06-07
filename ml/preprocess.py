@@ -91,7 +91,7 @@ y_test.to_csv("data/y_test.csv",   index=False)
 
 joblib.dump({"encoders": encoders, "scaler": scaler}, "data/encoders.pkl")
 
-print("\n✅ Preprocessing complete")
+print("\n[OK] Preprocessing complete")
 print(f"   X_train: {X_train.shape}")
 print(f"   X_test:  {X_test.shape}")
 print(f"   Saved: data/X_train.csv, X_test.csv, y_train.csv, y_test.csv, encoders.pkl")

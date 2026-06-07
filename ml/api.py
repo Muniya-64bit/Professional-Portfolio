@@ -22,9 +22,9 @@ try:
     artifacts = joblib.load("data/encoders.pkl")
     encoders  = artifacts["encoders"]
     scaler    = artifacts["scaler"]
-    print("✅ Model and encoders loaded successfully")
+    print("[OK] Model and encoders loaded successfully")
 except Exception as e:
-    print(f"❌ Failed to load model: {e}")
+    print(f"[FAIL] Failed to load model: {e}")
     model    = None
     encoders = None
     scaler   = None

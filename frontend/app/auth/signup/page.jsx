@@ -56,7 +56,7 @@ export default function Signup() {
         <div className={styles.authBrandDecor1} />
         <div className={styles.authBrandDecor2} />
         <div className={styles.authBrandContent}>
-          <div className={styles.authBrandLogo}>🌿</div>
+          <img src="/logo.png" alt="KVPL Logo" className={styles.authBrandLogo} style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
           <h1 className={styles.authBrandTitle}>Join KVPL</h1>
           <p className={styles.authBrandSub}>
             Create your account to start optimizing your tea plantation operations
