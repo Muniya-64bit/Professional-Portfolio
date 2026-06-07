@@ -460,7 +460,7 @@ function FertilizerTab() {
 
 /* ── Tab: Labour ──────────────────────────────────────────────────────── */
 function LabourTab() {
-  const { token, canWrite } = useAuth();
+  const { token, canWrite, isManager } = useAuth();
   const [view, setView]           = useState('month');     // 'month' | 'rotation' | 'employees'
   const [estates, setEstates]     = useState([]);
   const [estateId, setEstateId]   = useState('');
@@ -747,7 +747,7 @@ function LabourTab() {
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span className="badge badge-neutral">{assignments.length} blocks</span>
-                  {canWrite && (
+                  {(canWrite || isManager) && (
                     <button
                       onClick={openYieldModal}
                       style={{
@@ -1006,7 +1006,7 @@ function LabourTab() {
                 <div className="table-title">Field Employees</div>
                 <div className="table-subtitle">{employees.length} active employees</div>
               </div>
-              {canWrite && (
+              {(canWrite || isManager) && (
                 <button
                   onClick={openAddModal}
                   style={{
@@ -1412,17 +1412,6 @@ function ReportTab() {
   const [yr, mo]    = reportMonth ? reportMonth.split('-').map(Number) : [null, null];
   const estate      = estates.find(e => e.id === estateId);
 
-  const WHAT = [
-    { icon: '📋', label: 'Cover page', desc: 'Estate name, period, plan status, employee count' },
-    { icon: '📊', label: 'Executive Summary', desc: '8-KPI grid: blocks, employees, target, actual, efficiency, kg/worker' },
-    { icon: '📝', label: 'Labour Plan table', desc: 'All block assignments with expected vs actual, efficiency %, variance' },
-    { icon: '📈', label: 'Yield efficiency chart', desc: 'Grouped horizontal bars: actual vs expected per block with % labels' },
-    { icon: '📉', label: 'Monthly yield trend', desc: 'Bar chart with trend line overlay for the full year' },
-    { icon: '👥', label: 'Worker groups', desc: 'Table + headcount vs capacity chart per group' },
-    { icon: '🧑‍🌾', label: 'Employee summary', desc: 'Breakdown by skill type and employment type' },
-    { icon: '🌧️', label: 'Weather conditions', desc: 'Dual-axis chart: monthly rainfall bars + temperature & humidity lines' },
-  ];
-
   return (
     <div style={{ maxWidth: 720 }}>
 
@@ -1523,29 +1512,6 @@ function ReportTab() {
             </div>
           </div>
 
-          {/* what's included */}
-          <div style={{ padding: '20px 24px' }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-text-muted)',
-                          textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>
-              Report Contents
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
-              {WHAT.map(({ icon, label, desc }) => (
-                <div key={label} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0',
-                                         borderBottom: '1px solid var(--color-border)' }}>
-                  <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{icon}</span>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--color-text)' }}>
-                      {label}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 1 }}>
-                      {desc}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
 
@@ -1653,15 +1619,6 @@ export default function DashboardPage() {
                 </span>
               )}
             </button>
-          ))}
-
-          <div className="dash-nav-label" style={{ marginTop: 'var(--space-4)' }}>Estates</div>
-          {estates.map(e => (
-            <div key={e.id} className="dash-nav-item" style={{ cursor: 'default', fontSize: '0.875rem' }}>
-              <span className="dash-nav-icon" style={{ fontSize: '0.875rem' }}>🏡</span>
-              {e.name}
-              <span className="dash-nav-badge" style={{ background: 'rgba(255,255,255,0.1)' }}>#{e.rank}</span>
-            </div>
           ))}
         </nav>
 

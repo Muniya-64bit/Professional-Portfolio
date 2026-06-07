@@ -614,7 +614,6 @@ def list_employees():
 
 @labour_bp.route('/employees', methods=['POST'])
 @token_required
-@write_required
 def create_employee():
     """POST /api/labour/employees — add a new field worker."""
     data = request.get_json() or {}
@@ -622,6 +621,11 @@ def create_employee():
     missing  = [f for f in required if not data.get(f)]
     if missing:
         return jsonify({'error': f'Missing: {", ".join(missing)}'}), 400
+
+    # Scope check: managers can only add to their own estate
+    estate_id, err = effective_estate_id(data.get('estate_id'))
+    if err:
+        return err
 
     conn = _db()
     if not conn:
@@ -635,7 +639,7 @@ def create_employee():
                 ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING id
             """, (
-                data['estate_id'], data['employee_code'], data['full_name'],
+                estate_id, data['employee_code'], data['full_name'],
                 data.get('gender'), data.get('national_id'), data['hire_date'],
                 data.get('employment_type', 'permanent'),
                 data.get('skill_type', 'plucker'),
@@ -894,7 +898,6 @@ def get_rotation():
 
 @labour_bp.route('/plans/<plan_id>/record-yield', methods=['POST'])
 @token_required
-@write_required
 def record_plan_yield(plan_id):
     """POST /api/labour/plans/<plan_id>/record-yield
 
@@ -915,12 +918,18 @@ def record_plan_yield(plan_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT period_start FROM labour_plan WHERE id = %s", (plan_id,))
+                "SELECT period_start, estate_id FROM labour_plan WHERE id = %s", (plan_id,))
             plan_row = cur.fetchone()
             if not plan_row:
                 return jsonify({'error': 'Plan not found'}), 404
             year  = plan_row[0].year
             month = plan_row[0].month
+            plan_estate_id = plan_row[1]
+
+            # Scope check: managers can only record yields for their own estate
+            _, err = effective_estate_id(plan_estate_id)
+            if err:
+                return err
 
             updated = 0
             for entry in yields:
