@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '../../context/AuthContext';
+import { apiService } from '../../api/apiService';
 import styles from '../auth.module.css';
 
 export default function Signup() {
@@ -11,10 +12,20 @@ export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState('manager');
+  const [estateId, setEstateId] = useState('');
+  const [estates, setEstates] = useState([]);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { signup } = useAuth();
+
+  // Load estates for the manager estate selector
+  useEffect(() => {
+    apiService.getPublicEstates()
+      .then(setEstates)
+      .catch(() => setEstates([]));
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -26,9 +37,10 @@ export default function Signup() {
     if (!/\d/.test(password)) { setError('Password must contain at least one digit'); return; }
     if (!/[!@#$%^&*()_+\-=\[\]{};:'",.<>?]/.test(password)) { setError('Password must contain at least one special character'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    if (role === 'manager' && !estateId) { setError('Please select an estate for the manager role'); return; }
     setIsLoading(true);
     try {
-      await signup(email, password, fullName);
+      await signup(email, password, fullName, role, role === 'manager' ? estateId : null);
       router.push('/dashboard');
     } catch (err) {
       setError(err.message || 'Sign up failed. Please try again.');
@@ -144,6 +156,40 @@ export default function Signup() {
                 disabled={isLoading}
               />
             </div>
+
+            <div className={styles.formGroup}>
+              <label htmlFor="role" className={styles.formLabel}>Role</label>
+              <select
+                id="role"
+                className={styles.formInput}
+                value={role}
+                onChange={e => setRole(e.target.value)}
+                disabled={isLoading}
+              >
+                <option value="admin">Admin — full access</option>
+                <option value="estate_manager">Estate Manager — full access</option>
+                <option value="manager">Manager — read-only, single estate</option>
+              </select>
+            </div>
+
+            {role === 'manager' && (
+              <div className={styles.formGroup}>
+                <label htmlFor="estate" className={styles.formLabel}>Estate</label>
+                <select
+                  id="estate"
+                  className={styles.formInput}
+                  value={estateId}
+                  onChange={e => setEstateId(e.target.value)}
+                  disabled={isLoading}
+                  required
+                >
+                  <option value="">Select an estate…</option>
+                  {estates.map(es => (
+                    <option key={es.id} value={es.id}>{es.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <button type="submit" className={styles.submitBtn} disabled={isLoading}>
               {isLoading ? 'Creating account…' : 'Create account →'}

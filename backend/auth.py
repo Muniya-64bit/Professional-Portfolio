@@ -103,11 +103,17 @@ def rate_limit(endpoint, max_attempts=5, window_seconds=900):
         return decorated
     return decorator
 
-def generate_token(user_id, email, expires_in_days=7):
-    """Generate JWT token with expiration."""
+def generate_token(user_id, email, role=None, estate_id=None, expires_in_days=7):
+    """Generate JWT token with expiration.
+
+    role + estate_id are embedded so authorization decisions can be made without
+    a per-request DB lookup. estate_id scopes read-only 'manager' users.
+    """
     payload = {
         'user_id': str(user_id),
         'email': email,
+        'role': role,
+        'estate_id': str(estate_id) if estate_id else None,
         'iat': datetime.utcnow(),
         'exp': datetime.utcnow() + timedelta(days=expires_in_days)
     }
@@ -155,10 +161,53 @@ def token_required(f):
         request.user = payload
         request.token = token
         return f(*args, **kwargs)
-    
+
     return decorated
 
-def signup_user(email, password, full_name, role='estate_manager'):
+
+# ── Role-based authorization ──────────────────────────────────────────────────
+# Two tiers: FULL_ACCESS_ROLES can read + write across all estates; everyone else
+# ('manager') is read-only and scoped to their own estate_id.
+FULL_ACCESS_ROLES = {'admin', 'estate_manager'}
+
+
+def is_full_access():
+    """True if the current request's user may write and see all estates."""
+    return (getattr(request, 'user', {}) or {}).get('role') in FULL_ACCESS_ROLES
+
+
+def write_required(f):
+    """Block read-only roles (e.g. 'manager') from any mutating endpoint.
+
+    Must be applied *after* token_required (i.e. listed below it) so that
+    request.user has already been populated from the JWT.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_full_access():
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def effective_estate_id(requested):
+    """Resolve which estate the current user may act on.
+
+    Returns (estate_id, error_response_or_None):
+      - full-access roles: the requested value is passed through unchanged
+        (None means "all estates").
+      - manager: forced to their own estate; a request for a different estate
+        returns a 403 error response.
+    """
+    if is_full_access():
+        return requested, None
+    own = (getattr(request, 'user', {}) or {}).get('estate_id')
+    if requested and str(requested) != str(own):
+        return None, (jsonify({'error': 'Forbidden: outside your estate'}), 403)
+    return own, None
+
+
+def signup_user(email, password, full_name, role='manager', estate_id=None):
     """Create new user account."""
     conn = get_db_connection()
     if not conn:
@@ -177,17 +226,18 @@ def signup_user(email, password, full_name, role='estate_manager'):
             
             # Insert user
             cur.execute('''
-                INSERT INTO "user" (email, password_hash, full_name, name, role, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, email, full_name, role
-            ''', (email, hashed_password, full_name, full_name, role, datetime.utcnow(), datetime.utcnow()))
-            
+                INSERT INTO "user" (email, password_hash, full_name, name, role, estate_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, email, full_name, role, estate_id
+            ''', (email, hashed_password, full_name, full_name, role, estate_id,
+                  datetime.utcnow(), datetime.utcnow()))
+
             user = cur.fetchone()
             conn.commit()
-            
+
             if user:
-                user_id, user_email, user_name, user_role = user
-                token = generate_token(user_id, user_email)
+                user_id, user_email, user_name, user_role, user_estate_id = user
+                token = generate_token(user_id, user_email, user_role, user_estate_id)
                 logger.info(f"User created successfully: {user_email}")
                 return {
                     'message': 'User created successfully',
@@ -195,7 +245,8 @@ def signup_user(email, password, full_name, role='estate_manager'):
                         'id': str(user_id),
                         'email': user_email,
                         'full_name': user_name,
-                        'role': user_role
+                        'role': user_role,
+                        'estate_id': str(user_estate_id) if user_estate_id else None
                     },
                     'token': token
                 }, 201
@@ -213,47 +264,46 @@ def login_user(email, password):
     conn = get_db_connection()
     if not conn:
         return {'error': 'Database connection failed'}, 500
-    
+
     try:
         with conn.cursor() as cur:
             cur.execute('''
-                SELECT id, email, password_hash, full_name, role
+                SELECT id, email, password_hash, full_name, role, estate_id
                 FROM "user"
                 WHERE email = %s
             ''', (email,))
-            
             user = cur.fetchone()
-            conn.close()
-            
-            if not user:
-                logger.warning(f"Login failed - user not found: {email}")
-                return {'error': 'Invalid email or password'}, 401
-            
-            user_id, user_email, password_hash, full_name, role = user
-            
-            # Verify password
-            if not verify_password(password, password_hash):
-                logger.warning(f"Login failed - invalid password for: {email}")
-                return {'error': 'Invalid email or password'}, 401
-            
-            # Generate token
-            token = generate_token(user_id, user_email)
-            logger.info(f"User logged in successfully: {email}")
-            
-            return {
-                'message': 'Login successful',
-                'user': {
-                    'id': str(user_id),
-                    'email': user_email,
-                    'full_name': full_name,
-                    'role': role
-                },
-                'token': token,
-                'expires_in': 604800  # 7 days in seconds
-            }, 200
+
+        if not user:
+            logger.warning(f"Login failed - user not found: {email}")
+            return {'error': 'Invalid email or password'}, 401
+
+        user_id, user_email, password_hash, full_name, role, estate_id = user
+
+        if not verify_password(password, password_hash):
+            logger.warning(f"Login failed - invalid password for: {email}")
+            return {'error': 'Invalid email or password'}, 401
+
+        token = generate_token(user_id, user_email, role, estate_id)
+        logger.info(f"User logged in successfully: {email}")
+
+        return {
+            'message': 'Login successful',
+            'user': {
+                'id': str(user_id),
+                'email': user_email,
+                'full_name': full_name,
+                'role': role,
+                'estate_id': str(estate_id) if estate_id else None
+            },
+            'token': token,
+            'expires_in': 604800
+        }, 200
     except Exception as e:
         logger.error(f"Login error: {e}", exc_info=True)
         return {'error': 'Authentication failed'}, 500
+    finally:
+        conn.close()
 
 def get_user_profile(user_id):
     """Get user profile by ID."""
@@ -264,24 +314,25 @@ def get_user_profile(user_id):
     try:
         with conn.cursor() as cur:
             cur.execute('''
-                SELECT id, email, full_name, role, created_at
+                SELECT id, email, full_name, role, estate_id, created_at
                 FROM "user"
                 WHERE id = %s::uuid
             ''', (user_id,))
-            
+
             user = cur.fetchone()
             conn.close()
-            
+
             if not user:
                 return {'error': 'User not found'}, 404
-            
-            user_id, email, full_name, role, created_at = user
+
+            user_id, email, full_name, role, estate_id, created_at = user
             return {
                 'user': {
                     'id': str(user_id),
                     'email': email,
                     'full_name': full_name,
                     'role': role,
+                    'estate_id': str(estate_id) if estate_id else None,
                     'created_at': created_at.isoformat() if created_at else None
                 }
             }, 200

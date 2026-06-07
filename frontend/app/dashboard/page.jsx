@@ -460,8 +460,8 @@ function FertilizerTab() {
 
 /* ── Tab: Labour ──────────────────────────────────────────────────────── */
 function LabourTab() {
-  const { token } = useAuth();
-  const [view, setView]           = useState('week');      // 'week' | 'rotation' | 'employees'
+  const { token, canWrite } = useAuth();
+  const [view, setView]           = useState('month');     // 'month' | 'rotation' | 'employees'
   const [estates, setEstates]     = useState([]);
   const [estateId, setEstateId]   = useState('');
   const [plan, setPlan]           = useState(null);        // current week plan
@@ -486,12 +486,16 @@ function LabourTab() {
   const [deleteTarget, setDeleteTarget] = useState(null); // employee obj
   const [deleting, setDeleting]         = useState(false);
 
-  // Current week's Monday
-  const weekStart = (() => {
+  // Yield recording modal state
+  const [yieldModal, setYieldModal]   = useState(false);
+  const [yieldInputs, setYieldInputs] = useState({});  // { assignmentId: kg_string }
+  const [yieldSaving, setYieldSaving] = useState(false);
+  const [yieldError, setYieldError]   = useState('');
+
+  // First day of the current month (YYYY-MM-01)
+  const monthStart = (() => {
     const d = new Date();
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    return new Date(d.setDate(diff)).toISOString().slice(0, 10);
+    return new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-CA');
   })();
 
   // Load estates on mount
@@ -513,8 +517,8 @@ function LabourTab() {
 
     const load = async () => {
       try {
-        if (view === 'week') {
-          const plans = await apiService.getLabourPlans(token, { estateId, weekStart });
+        if (view === 'month') {
+          const plans = await apiService.getLabourPlans(token, { estateId, monthStart });
           if (plans.length > 0) {
             const detail = await apiService.getLabourPlan(token, plans[0].id);
             setPlan(detail);
@@ -539,7 +543,7 @@ function LabourTab() {
       }
     };
     load();
-  }, [token, estateId, view, weekStart]);
+  }, [token, estateId, view, monthStart]);
 
   const blankForm = {
     employee_code: '', full_name: '', gender: 'F',
@@ -614,6 +618,38 @@ function LabourTab() {
     }
   };
 
+  const openYieldModal = () => {
+    const pre = {};
+    (plan?.assignments || []).forEach(a => {
+      pre[a.id] = a.actual_yield_kg != null ? String(a.actual_yield_kg) : '';
+    });
+    setYieldInputs(pre);
+    setYieldError('');
+    setYieldModal(true);
+  };
+
+  const handleSaveYield = async () => {
+    const yields = Object.entries(yieldInputs)
+      .filter(([, v]) => v !== '' && !isNaN(parseFloat(v)))
+      .map(([assignment_id, v]) => ({ assignment_id, actual_yield_kg: parseFloat(v) }));
+    if (yields.length === 0) {
+      setYieldError('Enter at least one actual yield value.');
+      return;
+    }
+    setYieldSaving(true); setYieldError('');
+    try {
+      await apiService.recordPlanYield(token, plan.id, yields);
+      setYieldModal(false);
+      // Reload plan to reflect saved actuals
+      const updated = await apiService.getLabourPlan(token, plan.id);
+      setPlan(updated);
+    } catch (e) {
+      setYieldError(e.message);
+    } finally {
+      setYieldSaving(false);
+    }
+  };
+
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
   const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
@@ -635,10 +671,12 @@ function LabourTab() {
         <select
           value={estateId}
           onChange={e => setEstateId(e.target.value)}
+          disabled={!canWrite}
           style={{
             padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)',
             background: 'var(--color-surface-2)', color: 'var(--color-text)',
-            fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
+            fontSize: '0.875rem', fontWeight: 600,
+            cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7,
           }}
         >
           {estates.length === 0 && <option value="">Loading estates…</option>}
@@ -646,7 +684,7 @@ function LabourTab() {
         </select>
 
         <div style={{ display: 'flex', gap: 6 }}>
-          <button style={subBtnStyle('week')}      onClick={() => setView('week')}>This Week</button>
+          <button style={subBtnStyle('month')}     onClick={() => setView('month')}>This Month</button>
           <button style={subBtnStyle('rotation')}  onClick={() => setView('rotation')}>Rotation</button>
           <button style={subBtnStyle('employees')} onClick={() => setView('employees')}>Employees</button>
         </div>
@@ -665,8 +703,8 @@ function LabourTab() {
         </div>
       )}
 
-      {/* ── VIEW: This Week ── */}
-      {!loading && view === 'week' && (
+      {/* ── VIEW: This Month ── */}
+      {!loading && view === 'month' && (
         <>
           {/* KPI row */}
           <div className="kpi-grid">
@@ -679,7 +717,7 @@ function LabourTab() {
           {/* Plan meta row */}
           {plan && (
             <div style={{ display: 'flex', gap: 12, marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
-              <span className="badge badge-neutral">Week starting {plan.week_start}</span>
+              <span className="badge badge-neutral">Month of {plan.period_start}</span>
               <span className={`badge ${plan.status === 'published' ? 'badge-success' : plan.status === 'completed' ? 'badge-neutral' : 'badge-warning'}`}>
                 {plan.status}
               </span>
@@ -696,18 +734,32 @@ function LabourTab() {
             <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)',
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
-              <p>No labour plan for this week yet.</p>
+              <p>No labour plan for this month yet.</p>
             </div>
           ) : (
             <div className="table-wrap">
               <div className="table-header-bar">
                 <div>
-                  <div className="table-title">Block Assignments — {weekStart}</div>
+                  <div className="table-title">Block Assignments — {monthStart}</div>
                   <div className="table-subtitle">
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
                 </div>
-                <span className="badge badge-neutral">{assignments.length} blocks</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span className="badge badge-neutral">{assignments.length} blocks</span>
+                  {canWrite && (
+                    <button
+                      onClick={openYieldModal}
+                      style={{
+                        padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                        background: 'var(--color-primary)', color: '#fff', fontWeight: 600,
+                        fontSize: '0.8125rem',
+                      }}
+                    >
+                      Record Yield
+                    </button>
+                  )}
+                </div>
               </div>
               <table>
                 <thead>
@@ -782,6 +834,67 @@ function LabourTab() {
               </table>
             </div>
           )}
+
+          {/* ── Efficiency Summary (shows once actuals are recorded) ── */}
+          {plan && totalActual > 0 && (() => {
+            const planEff = totalTarget > 0 ? (totalActual / totalTarget * 100) : 0;
+            const kgPerWorker = totalWorkers > 0 ? (totalActual / totalWorkers) : 0;
+            const variance = totalActual - totalTarget;
+            const effColor = planEff >= 100 ? 'var(--color-success)' : planEff >= 90 ? 'var(--color-warning)' : 'var(--color-danger)';
+            const recorded = assignments.filter(a => a.actual_yield_kg != null).length;
+            return (
+              <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
+                <div className="section-card-header">
+                  <div className="section-card-title">
+                    <div className="section-card-title-icon">⚡</div>
+                    Yield Efficiency Report
+                  </div>
+                  <span className="badge badge-neutral">{recorded}/{assignments.length} blocks recorded</span>
+                </div>
+                <div className="section-card-body">
+                  {/* Summary stats */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 24 }}>
+                    {[
+                      { label: 'Plan Efficiency', value: `${planEff.toFixed(1)}%`, color: effColor },
+                      { label: 'Actual Total', value: `${Math.round(totalActual).toLocaleString()} kg`, color: 'var(--color-text)' },
+                      { label: 'Expected Total', value: `${Math.round(totalTarget).toLocaleString()} kg`, color: 'var(--color-text-muted)' },
+                      { label: 'Variance', value: `${variance >= 0 ? '+' : ''}${Math.round(variance).toLocaleString()} kg`, color: variance >= 0 ? 'var(--color-success)' : 'var(--color-danger)' },
+                      { label: 'kg / Worker', value: kgPerWorker > 0 ? `${Math.round(kgPerWorker).toLocaleString()}` : '—', color: 'var(--color-text)' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: '1.25rem', fontWeight: 700, color }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Per-block efficiency bars */}
+                  {assignments.filter(a => a.actual_yield_kg != null).map(a => {
+                    const exp = a.expected_yield_kg || 0;
+                    const act = parseFloat(a.actual_yield_kg);
+                    const eff = exp > 0 ? (act / exp * 100) : 0;
+                    const pct = Math.min(120, eff);
+                    const barClass = eff >= 100 ? 'progress-green' : eff >= 90 ? 'progress-amber' : 'progress-red';
+                    const col = eff >= 100 ? 'var(--color-success)' : eff >= 90 ? 'var(--color-warning)' : 'var(--color-danger)';
+                    return (
+                      <div key={a.id} style={{ marginBottom: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.875rem' }}>
+                          <span style={{ fontWeight: 600 }}>{a.block_code} <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>{a.group_name || ''}</span></span>
+                          <span style={{ fontWeight: 700, color: col }}>{eff.toFixed(1)}%
+                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, fontSize: '0.8rem', marginLeft: 8 }}>
+                              {Math.round(act).toLocaleString()} / {Math.round(exp).toLocaleString()} kg
+                            </span>
+                          </span>
+                        </div>
+                        <div className="progress-wrap" style={{ height: 8 }}>
+                          <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </>
       )}
 
@@ -893,15 +1006,17 @@ function LabourTab() {
                 <div className="table-title">Field Employees</div>
                 <div className="table-subtitle">{employees.length} active employees</div>
               </div>
-              <button
-                onClick={openAddModal}
-                style={{
-                  padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                  background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
-                }}
-              >
-                + Add Employee
-              </button>
+              {canWrite && (
+                <button
+                  onClick={openAddModal}
+                  style={{
+                    padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                    background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
+                  }}
+                >
+                  + Add Employee
+                </button>
+              )}
             </div>
             <table>
               <thead>
@@ -938,26 +1053,32 @@ function LabourTab() {
                     <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.hire_date}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button
-                          onClick={() => openEditModal(emp)}
-                          style={{
-                            padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
-                            background: 'transparent', color: 'var(--color-text)', cursor: 'pointer',
-                            fontSize: '0.75rem', fontWeight: 600,
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(emp)}
-                          style={{
-                            padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)',
-                            background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer',
-                            fontSize: '0.75rem', fontWeight: 600,
-                          }}
-                        >
-                          Delete
-                        </button>
+                        {canWrite ? (
+                          <>
+                            <button
+                              onClick={() => openEditModal(emp)}
+                              style={{
+                                padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
+                                background: 'transparent', color: 'var(--color-text)', cursor: 'pointer',
+                                fontSize: '0.75rem', fontWeight: 600,
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => setDeleteTarget(emp)}
+                              style={{
+                                padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)',
+                                background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer',
+                                fontSize: '0.75rem', fontWeight: 600,
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>—</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1145,7 +1266,314 @@ function LabourTab() {
           )}
         </>
       )}
+
+      {/* ── Record Yield Modal (top-level so it works from any sub-view) ── */}
+      {yieldModal && plan && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: 'var(--color-surface)', borderRadius: 16, padding: 32,
+            width: '100%', maxWidth: 560, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            maxHeight: '90vh', overflowY: 'auto',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 4 }}>
+              Record Actual Yield
+            </div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              {plan.period_start} · {plan.estate_name} — enter harvested kg per block
+            </div>
+
+            {yieldError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
+                            color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {yieldError}
+              </div>
+            )}
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  {['Block', 'Group', 'Expected (kg)', 'Actual (kg)'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '6px 8px', fontSize: '0.75rem',
+                      color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)',
+                      fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em',
+                    }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {plan.assignments.map(a => (
+                  <tr key={a.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                    <td style={{ padding: '10px 8px', fontWeight: 700, fontSize: '0.9rem' }}>{a.block_code}</td>
+                    <td style={{ padding: '10px 8px', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                      {a.group_name || '—'}
+                    </td>
+                    <td style={{ padding: '10px 8px', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+                      {a.expected_yield_kg != null ? Math.round(a.expected_yield_kg).toLocaleString() : '—'}
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="e.g. 24500"
+                        value={yieldInputs[a.id] ?? ''}
+                        onChange={e => setYieldInputs(prev => ({ ...prev, [a.id]: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '7px 10px', borderRadius: 6, boxSizing: 'border-box',
+                          border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                          color: 'var(--color-text)', fontSize: '0.875rem',
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setYieldModal(false); setYieldError(''); }}
+                disabled={yieldSaving}
+                style={{
+                  padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
+                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveYield}
+                disabled={yieldSaving}
+                style={{
+                  padding: '8px 24px', borderRadius: 8, border: 'none',
+                  background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600,
+                  opacity: yieldSaving ? 0.7 : 1,
+                }}
+              >
+                {yieldSaving ? 'Saving…' : 'Save Yield'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+/* ── Tab: Reports ─────────────────────────────────────────────────────── */
+function ReportTab() {
+  const { token, canWrite } = useAuth();
+  const [estates, setEstates]         = useState([]);
+  const [estateId, setEstateId]       = useState('');
+  const [reportMonth, setReportMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [generating, setGenerating]   = useState(false);
+  const [error, setError]             = useState('');
+  const [done, setDone]               = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getEstates(token)
+      .then(data => { setEstates(data); if (data.length > 0) setEstateId(data[0].id); })
+      .catch(() => {});
+  }, [token]);
+
+  const handleGenerate = async () => {
+    if (!estateId || !reportMonth) return;
+    const [year, month] = reportMonth.split('-').map(Number);
+    setGenerating(true); setError(''); setDone(false);
+    try {
+      await apiService.downloadPdfReport(token, estateId, year, month);
+      setDone(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const sel = {
+    padding: '9px 14px', borderRadius: 8,
+    border: '1px solid var(--color-border)',
+    background: 'var(--color-surface-2)', color: 'var(--color-text)',
+    fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer',
+  };
+
+  const MONTH_NAMES = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+  const [yr, mo]    = reportMonth ? reportMonth.split('-').map(Number) : [null, null];
+  const estate      = estates.find(e => e.id === estateId);
+
+  const WHAT = [
+    { icon: '📋', label: 'Cover page', desc: 'Estate name, period, plan status, employee count' },
+    { icon: '📊', label: 'Executive Summary', desc: '8-KPI grid: blocks, employees, target, actual, efficiency, kg/worker' },
+    { icon: '📝', label: 'Labour Plan table', desc: 'All block assignments with expected vs actual, efficiency %, variance' },
+    { icon: '📈', label: 'Yield efficiency chart', desc: 'Grouped horizontal bars: actual vs expected per block with % labels' },
+    { icon: '📉', label: 'Monthly yield trend', desc: 'Bar chart with trend line overlay for the full year' },
+    { icon: '👥', label: 'Worker groups', desc: 'Table + headcount vs capacity chart per group' },
+    { icon: '🧑‍🌾', label: 'Employee summary', desc: 'Breakdown by skill type and employment type' },
+    { icon: '🌧️', label: 'Weather conditions', desc: 'Dual-axis chart: monthly rainfall bars + temperature & humidity lines' },
+  ];
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+
+      {/* ── Controls ── */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end',
+                    marginBottom: 'var(--space-6)' }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)',
+                        marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Estate
+          </div>
+          <select
+            value={estateId}
+            onChange={e => { setEstateId(e.target.value); setDone(false); }}
+            disabled={!canWrite}
+            style={{ ...sel, cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7 }}
+          >
+            {estates.length === 0 && <option value="">Loading…</option>}
+            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)',
+                        marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Period
+          </div>
+          <input
+            type="month"
+            value={reportMonth}
+            onChange={e => { setReportMonth(e.target.value); setDone(false); }}
+            style={sel}
+          />
+        </div>
+
+        <button
+          onClick={handleGenerate}
+          disabled={generating || !estateId}
+          style={{
+            padding: '10px 28px', borderRadius: 8, border: 'none', cursor: 'pointer',
+            background: generating ? '#6b7280' : 'var(--color-primary)',
+            color: '#fff', fontWeight: 700, fontSize: '0.9rem',
+            display: 'flex', alignItems: 'center', gap: 8,
+            opacity: !estateId ? 0.5 : 1, alignSelf: 'flex-end',
+          }}
+        >
+          {generating ? (
+            <>
+              <span style={{ display: 'inline-block', width: 14, height: 14,
+                             border: '2px solid rgba(255,255,255,0.4)',
+                             borderTopColor: '#fff', borderRadius: '50%',
+                             animation: 'spin 0.8s linear infinite' }} />
+              Generating PDF…
+            </>
+          ) : '⬇  Download PDF Report'}
+        </button>
+      </div>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+      {/* ── Error ── */}
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)',
+                      color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem',
+                      border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* ── Success ── */}
+      {done && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,0.08)',
+                      color: 'var(--color-success)', marginBottom: 20, fontSize: '0.875rem',
+                      border: '1px solid rgba(22,163,74,0.2)', fontWeight: 600 }}>
+          PDF downloaded — check your downloads folder.
+        </div>
+      )}
+
+      {/* ── Report preview card ── */}
+      {estate && yr && mo && (
+        <div style={{ background: 'var(--color-surface-2)', borderRadius: 14,
+                      border: '1px solid var(--color-border)', overflow: 'hidden',
+                      marginBottom: 'var(--space-6)' }}>
+          {/* gradient header */}
+          <div style={{
+            background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
+            padding: '22px 24px', color: '#fff',
+          }}>
+            <div style={{ fontSize: '0.75rem', opacity: 0.65, textTransform: 'uppercase',
+                          letterSpacing: '0.1em', marginBottom: 6 }}>
+              Estate Performance Report
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 2 }}>
+              {estate.name}
+            </div>
+            <div style={{ opacity: 0.75, fontSize: '0.9rem' }}>
+              {estate.region || ''}{estate.region ? ' · ' : ''}{MONTH_NAMES[mo - 1]} {yr}
+            </div>
+          </div>
+
+          {/* what's included */}
+          <div style={{ padding: '20px 24px' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-text-muted)',
+                          textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>
+              Report Contents
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+              {WHAT.map(({ icon, label, desc }) => (
+                <div key={label} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0',
+                                         borderBottom: '1px solid var(--color-border)' }}>
+                  <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{icon}</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--color-text)' }}>
+                      {label}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 1 }}>
+                      {desc}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Loading overlay card ── */}
+      {generating && (
+        <div style={{ padding: 40, textAlign: 'center', background: 'var(--color-surface-2)',
+                      borderRadius: 14, border: '1px solid var(--color-border)' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📄</div>
+          <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>
+            Building your report…
+          </div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+            Fetching data, rendering charts and assembling PDF. This takes a few seconds.
+          </div>
+        </div>
+      )}
+
+      {/* ── Idle state ── */}
+      {!generating && !estate && (
+        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)',
+                      borderRadius: 14, border: '1px solid var(--color-border)',
+                      color: 'var(--color-text-muted)' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: 10 }}>📄</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Select an estate and period</div>
+          <div style={{ fontSize: '0.875rem' }}>then click Download PDF Report</div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1156,6 +1584,7 @@ const navItems = [
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
   { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
   { id: 'labour',      icon: '👥', label: 'Labour Planner' },
+  { id: 'reports',     icon: '📄', label: 'Reports' },
 ];
 
 const tabTitles = {
@@ -1163,22 +1592,26 @@ const tabTitles = {
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
   fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
-  labour:     { title: 'Labour Planner',      sub: 'Weekly worker allocation & production targets' },
+  labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
+  reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
 };
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, loading, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    // Wait until auth has finished restoring/verifying the stored token
+    // before deciding the user is unauthenticated — otherwise a refresh
+    // redirects to login before the localStorage token is loaded.
+    if (!loading && !isAuthenticated) {
       router.push('/auth/login');
     }
-  }, [isAuthenticated, router]);
+  }, [loading, isAuthenticated, router]);
 
-  if (!isAuthenticated) {
+  if (loading || !isAuthenticated) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>
@@ -1262,6 +1695,19 @@ export default function DashboardPage() {
                 <span className="badge badge-neutral" style={{ fontSize: '0.6875rem' }}>{user.role}</span>
               )}
             </div>
+            <button
+              onClick={logout}
+              title="Sign out"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px', borderRadius: 8,
+                border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                color: 'var(--color-danger)', fontWeight: 600, fontSize: '0.8125rem',
+                cursor: 'pointer',
+              }}
+            >
+              🚪 Sign Out
+            </button>
           </div>
         </header>
 
@@ -1277,6 +1723,7 @@ export default function DashboardPage() {
           {activeTab === 'water'       && <WaterTab />}
           {activeTab === 'fertilizer'  && <FertilizerTab />}
           {activeTab === 'labour'      && <LabourTab />}
+          {activeTab === 'reports'     && <ReportTab />}
         </main>
       </div>
     </div>
