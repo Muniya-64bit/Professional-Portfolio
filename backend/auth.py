@@ -158,7 +158,7 @@ def token_required(f):
     
     return decorated
 
-def signup_user(email, password, full_name, role='manager'):
+def signup_user(email, password, full_name, role='estate_manager'):
     """Create new user account."""
     conn = get_db_connection()
     if not conn:
@@ -171,12 +171,6 @@ def signup_user(email, password, full_name, role='manager'):
             if cur.fetchone():
                 logger.info(f"Signup attempted with existing email: {email}")
                 return {'error': 'Email already registered'}, 400
-            
-            # Validate password strength
-            is_strong, message = validate_password_strength(password)
-            if not is_strong:
-                logger.info(f"Signup failed - weak password for {email}: {message}")
-                return {'error': message}, 400
             
             # Hash password
             hashed_password = hash_password(password)

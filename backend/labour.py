@@ -424,8 +424,58 @@ def update_employee(employee_id):
             cur.execute(f"UPDATE employee SET {sets}, updated_at = NOW() WHERE id = %s", params)
             if cur.rowcount == 0:
                 return jsonify({'error': 'Employee not found'}), 404
+
+            # If group_id provided, move the employee to that group
+            group_id = data.get('group_id')
+            if group_id is not None:
+                # Deactivate current membership
+                cur.execute("""
+                    UPDATE worker_group_member
+                    SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
+                    WHERE employee_id = %s AND is_active = TRUE
+                """, (employee_id,))
+                # Assign to new group if not empty string
+                if group_id:
+                    cur.execute("""
+                        INSERT INTO worker_group_member (group_id, employee_id, joined_date, is_active)
+                        VALUES (%s, %s, CURRENT_DATE, TRUE)
+                        ON CONFLICT (group_id, employee_id)
+                        DO UPDATE SET is_active = TRUE, left_date = NULL, updated_at = NOW()
+                    """, (group_id, employee_id))
+
             conn.commit()
         return jsonify({'message': 'Employee updated'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/employees/<employee_id>', methods=['DELETE'])
+@token_required
+def delete_employee(employee_id):
+    """DELETE /api/labour/employees/<id> — soft delete (sets is_active = FALSE)."""
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Deactivate group membership
+            cur.execute("""
+                UPDATE worker_group_member
+                SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
+                WHERE employee_id = %s AND is_active = TRUE
+            """, (employee_id,))
+            # Soft delete the employee
+            cur.execute("""
+                UPDATE employee SET is_active = FALSE, updated_at = NOW()
+                WHERE id = %s AND is_active = TRUE
+            """, (employee_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Employee not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Employee deactivated'}), 200
     except Exception as e:
         conn.rollback()
         return _db_err(e)

@@ -192,6 +192,10 @@ export const apiService = {
     return this._labour(token, 'PUT', `/employees/${employeeId}`, data);
   },
 
+  deleteEmployee(token, employeeId) {
+    return this._labour(token, 'DELETE', `/employees/${employeeId}`);
+  },
+
   getWorkerGroups(token, estateId) {
     const q = estateId ? `?estate_id=${estateId}` : '';
     return this._labour(token, 'GET', `/groups${q}`);

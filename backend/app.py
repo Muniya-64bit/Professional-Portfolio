@@ -56,7 +56,7 @@ def signup():
     if not is_strong:
         return jsonify({'error': message}), 400
     
-    result, status = signup_user(email, password, full_name, role='manager')
+    result, status = signup_user(email, password, full_name, role='estate_manager')
     return jsonify(result), status
 
 @app.route("/api/auth/login", methods=["POST"])

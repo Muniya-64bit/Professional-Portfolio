@@ -453,16 +453,20 @@ function LabourTab() {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
 
-  // Modal state for add-employee
-  const [showAddEmp, setShowAddEmp]   = useState(false);
-  const [empForm, setEmpForm]         = useState({
+  // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
+  const [empModal, setEmpModal]     = useState(null);
+  const [empForm, setEmpForm]       = useState({
     employee_code: '', full_name: '', gender: 'F',
     hire_date: new Date().toISOString().slice(0, 10),
     employment_type: 'permanent', skill_type: 'plucker',
     daily_wage_lkr: '', group_id: '',
   });
-  const [empSaving, setEmpSaving]     = useState(false);
-  const [empError, setEmpError]       = useState('');
+  const [empSaving, setEmpSaving]   = useState(false);
+  const [empError, setEmpError]     = useState('');
+
+  // Delete confirmation state
+  const [deleteTarget, setDeleteTarget] = useState(null); // employee obj
+  const [deleting, setDeleting]         = useState(false);
 
   // Current week's Monday
   const weekStart = (() => {
@@ -519,28 +523,76 @@ function LabourTab() {
     load();
   }, [token, estateId, view, weekStart]);
 
-  const handleAddEmployee = async () => {
-    if (!empForm.employee_code || !empForm.full_name || !empForm.hire_date) {
-      setEmpError('Code, full name and hire date are required.');
+  const blankForm = {
+    employee_code: '', full_name: '', gender: 'F',
+    hire_date: new Date().toISOString().slice(0, 10),
+    employment_type: 'permanent', skill_type: 'plucker',
+    daily_wage_lkr: '', group_id: '',
+  };
+
+  const openAddModal = () => {
+    setEmpForm(blankForm);
+    setEmpError('');
+    setEmpModal('add');
+  };
+
+  const openEditModal = (emp) => {
+    setEmpForm({
+      employee_code:   emp.employee_code,
+      full_name:       emp.full_name,
+      gender:          emp.gender || 'F',
+      hire_date:       emp.hire_date || '',
+      employment_type: emp.employment_type || 'permanent',
+      skill_type:      emp.skill_type || 'plucker',
+      daily_wage_lkr:  emp.daily_wage_lkr || '',
+      group_id:        emp.group_id || '',
+    });
+    setEmpError('');
+    setEmpModal(emp);   // store the employee object so we know it's edit mode
+  };
+
+  const handleSaveEmployee = async () => {
+    if (!empForm.full_name || (empModal === 'add' && !empForm.employee_code)) {
+      setEmpError('Employee code and full name are required.');
       return;
     }
     setEmpSaving(true); setEmpError('');
     try {
-      await apiService.createEmployee(token, { ...empForm, estate_id: estateId });
-      setShowAddEmp(false);
-      setEmpForm({
-        employee_code: '', full_name: '', gender: 'F',
-        hire_date: new Date().toISOString().slice(0, 10),
-        employment_type: 'permanent', skill_type: 'plucker',
-        daily_wage_lkr: '', group_id: '',
-      });
-      // Refresh employee list
+      if (empModal === 'add') {
+        await apiService.createEmployee(token, { ...empForm, estate_id: estateId });
+      } else {
+        // empModal holds the original employee object
+        await apiService.updateEmployee(token, empModal.id, {
+          full_name:       empForm.full_name,
+          gender:          empForm.gender,
+          employment_type: empForm.employment_type,
+          skill_type:      empForm.skill_type,
+          daily_wage_lkr:  empForm.daily_wage_lkr || null,
+          group_id:        empForm.group_id,
+        });
+      }
+      setEmpModal(null);
       const emps = await apiService.getEmployees(token, { estateId });
       setEmployees(emps);
     } catch (e) {
       setEmpError(e.message);
     } finally {
       setEmpSaving(false);
+    }
+  };
+
+  const handleDeleteEmployee = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await apiService.deleteEmployee(token, deleteTarget.id);
+      setDeleteTarget(null);
+      const emps = await apiService.getEmployees(token, { estateId });
+      setEmployees(emps);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -824,7 +876,7 @@ function LabourTab() {
                 <div className="table-subtitle">{employees.length} active employees</div>
               </div>
               <button
-                onClick={() => setShowAddEmp(true)}
+                onClick={openAddModal}
                 style={{
                   padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
                   background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
@@ -843,11 +895,12 @@ function LabourTab() {
                   <th>Type</th>
                   <th>Wage / day</th>
                   <th>Hire Date</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {employees.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>
                     No employees found for this estate.
                   </td></tr>
                 ) : employees.map(emp => (
@@ -865,14 +918,38 @@ function LabourTab() {
                       {emp.daily_wage_lkr ? `Rs. ${Number(emp.daily_wage_lkr).toLocaleString()}` : '—'}
                     </td>
                     <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.hire_date}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => openEditModal(emp)}
+                          style={{
+                            padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
+                            background: 'transparent', color: 'var(--color-text)', cursor: 'pointer',
+                            fontSize: '0.75rem', fontWeight: 600,
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(emp)}
+                          style={{
+                            padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)',
+                            background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer',
+                            fontSize: '0.75rem', fontWeight: 600,
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* ── Add Employee Modal ── */}
-          {showAddEmp && (
+          {/* ── Add / Edit Employee Modal ── */}
+          {empModal !== null && (
             <div style={{
               position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
@@ -880,19 +957,45 @@ function LabourTab() {
               <div style={{
                 background: 'var(--color-surface)', borderRadius: 16, padding: 32,
                 width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+                maxHeight: '90vh', overflowY: 'auto',
               }}>
-                <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Add New Employee</div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
+                  {empModal === 'add' ? 'Add New Employee' : `Edit — ${empModal.full_name}`}
+                </div>
+
                 {empError && (
                   <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
                                 color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
                     {empError}
                   </div>
                 )}
+
+                {/* Employee Code — readonly on edit */}
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                                  color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                    Employee Code {empModal !== 'add' && <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>(read-only)</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={empForm.employee_code}
+                    readOnly={empModal !== 'add'}
+                    onChange={e => empModal === 'add' && setEmpForm(p => ({ ...p, employee_code: e.target.value }))}
+                    style={{
+                      width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+                      border: '1px solid var(--color-border)',
+                      background: empModal !== 'add' ? 'var(--color-surface-2)' : 'var(--color-surface-2)',
+                      color: empModal !== 'add' ? 'var(--color-text-muted)' : 'var(--color-text)',
+                      fontSize: '0.875rem', cursor: empModal !== 'add' ? 'not-allowed' : 'text',
+                    }}
+                  />
+                </div>
+
+                {/* Text fields */}
                 {[
-                  ['employee_code', 'Employee Code', 'text'],
-                  ['full_name',     'Full Name',     'text'],
-                  ['hire_date',     'Hire Date',     'date'],
-                  ['daily_wage_lkr','Daily Wage (LKR)','number'],
+                  ['full_name',      'Full Name',        'text'],
+                  ['hire_date',      'Hire Date',        'date'],
+                  ['daily_wage_lkr', 'Daily Wage (LKR)', 'number'],
                 ].map(([field, label, type]) => (
                   <div key={field} style={{ marginBottom: 14 }}>
                     <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
@@ -902,6 +1005,7 @@ function LabourTab() {
                     <input
                       type={type}
                       value={empForm[field]}
+                      readOnly={field === 'hire_date' && empModal !== 'add'}
                       onChange={e => setEmpForm(p => ({ ...p, [field]: e.target.value }))}
                       style={{
                         width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
@@ -911,7 +1015,8 @@ function LabourTab() {
                     />
                   </div>
                 ))}
-                {/* Selects row */}
+
+                {/* Select fields */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
                   {[
                     ['gender',          'Gender',     [['M','Male'],['F','Female'],['O','Other']]],
@@ -938,9 +1043,10 @@ function LabourTab() {
                     </div>
                   ))}
                 </div>
+
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
                   <button
-                    onClick={() => { setShowAddEmp(false); setEmpError(''); }}
+                    onClick={() => { setEmpModal(null); setEmpError(''); }}
                     style={{
                       padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
                       background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
@@ -949,7 +1055,7 @@ function LabourTab() {
                     Cancel
                   </button>
                   <button
-                    onClick={handleAddEmployee}
+                    onClick={handleSaveEmployee}
                     disabled={empSaving}
                     style={{
                       padding: '8px 20px', borderRadius: 8, border: 'none',
@@ -957,7 +1063,63 @@ function LabourTab() {
                       opacity: empSaving ? 0.7 : 1,
                     }}
                   >
-                    {empSaving ? 'Saving…' : 'Save Employee'}
+                    {empSaving ? 'Saving…' : empModal === 'add' ? 'Add Employee' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Delete Confirmation Modal ── */}
+          {deleteTarget && (
+            <div style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+            }}>
+              <div style={{
+                background: 'var(--color-surface)', borderRadius: 16, padding: 32,
+                width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              }}>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 8 }}>Delete Employee</div>
+                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem', marginBottom: 8 }}>
+                  Are you sure you want to deactivate:
+                </p>
+                <div style={{
+                  padding: '10px 14px', borderRadius: 8, background: 'var(--color-surface-2)',
+                  marginBottom: 20, border: '1px solid var(--color-border)',
+                }}>
+                  <div style={{ fontWeight: 700 }}>{deleteTarget.full_name}</div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', fontFamily: 'monospace' }}>
+                    {deleteTarget.employee_code}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    Group: {deleteTarget.group_code || '—'} · {deleteTarget.skill_type}
+                  </div>
+                </div>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+                  The employee will be marked inactive and removed from their group. Historical assignment records are preserved.
+                </p>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => setDeleteTarget(null)}
+                    disabled={deleting}
+                    style={{
+                      padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
+                      background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteEmployee}
+                    disabled={deleting}
+                    style={{
+                      padding: '8px 20px', borderRadius: 8, border: 'none',
+                      background: 'var(--color-danger)', color: '#fff', cursor: 'pointer', fontWeight: 600,
+                      opacity: deleting ? 0.7 : 1,
+                    }}
+                  >
+                    {deleting ? 'Deleting…' : 'Yes, Deactivate'}
                   </button>
                 </div>
               </div>

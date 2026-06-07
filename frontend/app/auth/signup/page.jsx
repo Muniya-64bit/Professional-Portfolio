@@ -20,6 +20,11 @@ export default function Signup() {
     e.preventDefault();
     setError('');
     if (!fullName.trim()) { setError('Full name is required'); return; }
+    if (password.length < 8) { setError('Password must be at least 8 characters long'); return; }
+    if (!/[A-Z]/.test(password)) { setError('Password must contain at least one uppercase letter'); return; }
+    if (!/[a-z]/.test(password)) { setError('Password must contain at least one lowercase letter'); return; }
+    if (!/\d/.test(password)) { setError('Password must contain at least one digit'); return; }
+    if (!/[!@#$%^&*()_+\-=\[\]{};:'",.<>?]/.test(password)) { setError('Password must contain at least one special character'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match'); return; }
     setIsLoading(true);
     try {
