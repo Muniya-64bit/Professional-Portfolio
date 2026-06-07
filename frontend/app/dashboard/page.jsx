@@ -1,9 +1,9 @@
 'use client';
 
-import { useAuth } from '../context/AuthContext';
-import { apiService } from '../api/apiService';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { apiService } from '../api/apiService';
+import { useAuth } from '../context/AuthContext';
 
 /* ── Mock Data ──────────────────────────────────────────────────────────── */
 const estates = [
@@ -13,14 +13,14 @@ const estates = [
   { id: 4, name: 'Ratnapura',    location: 'Sabaragamuwa',      rank: 4, costPerKg: 345, production: 2450, trend: [6, 2, 8, -3, 4, 3, 2],    delta: +2.3 },
 ];
 
-const waterData = [
-  { month: 'Jan', intensity: 4.2, target: 4.5 },
-  { month: 'Feb', intensity: 4.0, target: 4.5 },
-  { month: 'Mar', intensity: 4.8, target: 4.5 },
-  { month: 'Apr', intensity: 4.5, target: 4.5 },
-  { month: 'May', intensity: 3.9, target: 4.4 },
-  { month: 'Jun', intensity: 4.1, target: 4.4 },
-];
+// const waterData = [
+//   { month: 'Jan', intensity: 4.2, target: 4.5 },
+//   { month: 'Feb', intensity: 4.0, target: 4.5 },
+//   { month: 'Mar', intensity: 4.8, target: 4.5 },
+//   { month: 'Apr', intensity: 4.5, target: 4.5 },
+//   { month: 'May', intensity: 3.9, target: 4.4 },
+//   { month: 'Jun', intensity: 4.1, target: 4.4 },
+// ];
 
 const fertilizerBlocks = [
   { block: 'A1', estate: 'Kelani Valley', daysSince: 28, recommended: 'Urea 25kg', status: 'due' },
@@ -113,8 +113,7 @@ function OverviewTab() {
   const totalProd = labourData.reduce((s, r) => s + r.actual, 0);
   const avgCost = Math.round(estates.reduce((s, e) => s + e.costPerKg, 0) / estates.length);
   const activeWorkers = labourData.reduce((s, r) => s + r.workers, 0);
-  const avgWater = (waterData.reduce((s, w) => s + w.intensity, 0) / waterData.length).toFixed(1);
-
+  const avgWater = 'N/A';
   return (
     <>
       {/* KPI Cards */}
@@ -174,29 +173,7 @@ function OverviewTab() {
             <span className="badge badge-success">On Track</span>
           </div>
           <div className="section-card-body">
-            {waterData.map(w => {
-              const pct = Math.min(100, (w.intensity / 6) * 100);
-              const ok = w.intensity <= w.target;
-              return (
-                <div key={w.month} className="water-row">
-                  <div className="water-month">{w.month}</div>
-                  <div className="water-bar-wrap">
-                    <div className="progress-wrap">
-                      <div
-                        className={`progress-bar ${ok ? 'progress-green' : 'progress-amber'}`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="water-value" style={{ color: ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                    {w.intensity} L
-                  </div>
-                  <span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`} style={{ width: 80, justifyContent: 'center' }}>
-                    {ok ? 'On Track' : 'At Risk'}
-                  </span>
-                </div>
-              );
-            })}
+          <p style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>See the Water Efficiency tab for full details.</p>
           </div>
         </div>
       </div>
@@ -321,15 +298,54 @@ function ROITab() {
 
 /* ── Tab: Water ───────────────────────────────────────────────────────── */
 function WaterTab() {
-  const onTrack = waterData.filter(w => w.intensity <= w.target).length;
-  const atRisk = waterData.filter(w => w.intensity > w.target).length;
+  const { token } = useAuth();
+  const [waterData, setWaterData] = useState([]);
+  const [target, setTarget]       = useState(4.5);
+  const [loading, setLoading]     = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [usage, baseline] = await Promise.all([
+          apiService.getWaterUsage(token, 2026),
+          apiService.getWaterBaseline(token)
+        ]);
+
+        const t = baseline.length > 0
+          ? parseFloat((baseline[0].baseline_intensity * (1 - baseline[0].annual_target_pct / 100)).toFixed(3))
+          : 4.5;
+        setTarget(t);
+
+        const formatted = usage.map(w => ({
+          month:     w.month,
+          intensity: w.intensity_l_per_kg,
+          target:    t,
+          status:    w.track_status
+        }));
+        setWaterData(formatted);
+      } catch (err) {
+        console.error('Water data failed to load', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [token]);
+
+  const onTrack = waterData.filter(w => w.status === 'on_track').length;
+  const atRisk  = waterData.filter(w => w.status !== 'on_track').length;
+  const latest  = waterData.at(-1);
+  const worst   = waterData.reduce((a, b) => (b.intensity > a.intensity ? b : a), { intensity: 0 });
+
+  if (loading) return <p style={{ padding: '2rem' }}>Loading water data…</p>;
+
   return (
     <>
       <div className="kpi-grid">
-        <KpiCard icon="💧" iconBg="kpi-icon-teal"  label="Jun Intensity" value="4.1" unit="L/kg" delta={-0.9} deltaLabel="vs target 4.4 L/kg" />
+        <KpiCard icon="💧" iconBg="kpi-icon-teal"  label="Latest Intensity" value={latest?.intensity ?? '—'} unit="L/kg" delta={-0.9} deltaLabel={`vs target ${target} L/kg`} />
         <KpiCard icon="✅" iconBg="kpi-icon-green"  label="Months On Track" value={onTrack} unit="" />
-        <KpiCard icon="⚠️" iconBg="kpi-icon-amber"  label="Months At Risk"  value={atRisk} unit="" />
-        <KpiCard icon="🎯" iconBg="kpi-icon-blue"  label="Annual Goal"     value="-2%" unit="" deltaLabel="reduction vs last year" />
+        <KpiCard icon="⚠️" iconBg="kpi-icon-amber"  label="Months At Risk"  value={atRisk}  unit="" />
+        <KpiCard icon="🎯" iconBg="kpi-icon-blue"   label="Annual Goal"     value="-2%"    unit="" deltaLabel="reduction vs last year" />
       </div>
 
       <div className="table-wrap" style={{ marginBottom: 'var(--space-6)' }}>
@@ -353,12 +369,12 @@ function WaterTab() {
           </thead>
           <tbody>
             {waterData.map(w => {
-              const variance = (w.intensity - w.target).toFixed(1);
-              const ok = w.intensity <= w.target;
+              const variance = (w.intensity - w.target).toFixed(2);
+              const ok  = w.status === 'on_track';
               const pct = Math.min(100, (w.intensity / 6) * 100);
               return (
                 <tr key={w.month}>
-                  <td style={{ fontWeight: 600, color: 'var(--color-text)' }}>{w.month}</td>
+                  <td style={{ fontWeight: 600 }}>{w.month}</td>
                   <td style={{ fontWeight: 700, fontSize: '1.05rem', color: ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
                     {w.intensity}
                   </td>
@@ -379,10 +395,12 @@ function WaterTab() {
         </table>
       </div>
 
-      <div className="alert alert-info">
-        <span>ℹ️</span>
-        <span>March recorded the highest intensity at 4.8 L/kg. Review factory maintenance logs and irrigation schedules to identify root causes.</span>
-      </div>
+      {worst.intensity > 0 && worst.status !== 'on_track' && (
+        <div className="alert alert-info">
+          <span>ℹ️</span>
+          <span>{worst.month} recorded the highest intensity at {worst.intensity} L/kg. Review factory maintenance logs and irrigation schedules.</span>
+        </div>
+      )}
     </>
   );
 }

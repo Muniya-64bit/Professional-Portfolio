@@ -210,6 +210,48 @@ export const apiService = {
     return this._labour(token, 'GET', `/rotation${q}`);
   },
 
+
+  // ── Water Efficiency ──────────────────────────────────────────────────────
+
+  async _water(token, method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}/water${path}`, opts);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
+  },
+
+  getWaterStatus(token) {
+    return this._water(token, 'GET', '/status');
+  },
+
+  getWaterUsage(token, year = 2026, estateId = null) {
+    const q = new URLSearchParams();
+    q.set('year', year);
+    if (estateId) q.set('estate_id', estateId);
+    return this._water(token, 'GET', `/usage?${q}`);
+  },
+
+  getWaterBaseline(token) {
+    return this._water(token, 'GET', '/baseline');
+  },
+
+  getWaterEstates(token) {
+    return this._water(token, 'GET', '/estates');
+  },
+
+  addWaterUsage(token, data) {
+    return this._water(token, 'POST', '/usage', data);
+  },
+
+  updateWaterUsage(token, usageId, data) {
+    return this._water(token, 'PUT', `/usage/${usageId}`, data);
+  },
+  
   // Helper: Decode JWT token to get expiration time
   getTokenExpiration(token) {
     try {
