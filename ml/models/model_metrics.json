@@ -1,0 +1,25 @@
+{
+  "r2_train": 0.9969,
+  "r2_test": 0.9499,
+  "rmse_test": 92.91,
+  "mae_test": 66.71,
+  "cv_r2_mean": 0.8666,
+  "cv_r2_std": 0.0848,
+  "model_version": "xgboost_v1",
+  "features": [
+    "zone",
+    "elevation_m",
+    "area_hectares",
+    "soil_type",
+    "growth_stage",
+    "bush_age_yrs",
+    "rainfall_mm",
+    "avg_temp_c",
+    "avg_humidity_pct",
+    "days_since_fertilized",
+    "last_fertilizer_type",
+    "yield_last_month"
+  ],
+  "n_train": 1404,
+  "n_test": 468
+}
