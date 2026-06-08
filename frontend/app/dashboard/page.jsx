@@ -879,6 +879,7 @@ function LabourTab() {
                     <SortHeader label="Block" field="block_code" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Group" field="group_name" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Workers" field="group_capacity" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Predicted (kg)" field="predicted_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Target (kg)" field="expected_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <th>Efficiency</th>
@@ -920,6 +921,9 @@ function LabourTab() {
                             <span>👤</span>
                             <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
                           </div>
+                        </td>
+                        <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+                          {a.predicted_yield_kg ? Math.round(a.predicted_yield_kg).toLocaleString() : '—'}
                         </td>
                         <td style={{ fontWeight: 700 }}>
                           {editingTarget === a.id ? (

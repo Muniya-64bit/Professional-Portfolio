@@ -370,14 +370,18 @@ def get_plan(plan_id):
                        ba.expected_yield_kg, ba.actual_yield_kg,
                        ba.plucking_round_number, ba.status, ba.notes,
                        og.group_name AS original_group_name,
-                       ba.override_reason
+                       ba.override_reason,
+                       COALESCE(yp.predicted_yield_kg, ba.expected_yield_kg) AS predicted_yield_kg
                 FROM block_assignment ba
                 JOIN block b ON b.id = ba.block_id
                 LEFT JOIN worker_group wg ON wg.id = ba.worker_group_id
                 LEFT JOIN worker_group og ON og.id = ba.original_group_id
+                LEFT JOIN yield_prediction yp ON yp.block_id = b.id
+                       AND EXTRACT(YEAR FROM yp.month_year) = EXTRACT(YEAR FROM %s::DATE)
+                       AND EXTRACT(MONTH FROM yp.month_year) = EXTRACT(MONTH FROM %s::DATE)
                 WHERE ba.labour_plan_id = %s
                 ORDER BY b.block_code
-            """, (plan_id,))
+            """, (plan['period_start'], plan['period_start'], plan_id))
             plan['assignments'] = _rows(cur)
         return jsonify(plan), 200
     except Exception as e:
