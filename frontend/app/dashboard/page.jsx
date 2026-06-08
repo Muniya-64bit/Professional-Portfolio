@@ -227,6 +227,7 @@ function ROITab() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [showCSVImport, setShowCSVImport] = useState(null);
+  const [hoveredPointIndex, setHoveredPointIndex] = useState(null);
   
   // Selected filters
   const [selectedEstateId, setSelectedEstateId] = useState('');
@@ -471,21 +472,64 @@ function ROITab() {
                 strokeLinejoin="round"
               />
 
-              {/* Data points */}
+              {/* Data points with hover detection */}
               {estateMonthlyData.map((d, i) => {
                 const x = 100 + (i / 11) * 1100;
                 const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
                 const isSelected = i === selectedMonth - 1;
+                const isHovered = i === hoveredPointIndex;
                 return (
-                  <circle
-                    key={`point-${i}`}
-                    cx={x}
-                    cy={y}
-                    r={isSelected ? 6 : 4}
-                    fill={isSelected ? 'var(--color-primary)' : 'var(--color-surface-3)'}
-                    stroke="var(--color-primary)"
-                    strokeWidth="2"
-                  />
+                  <g key={`point-${i}`}>
+                    {/* Invisible larger circle for better hit detection */}
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r="12"
+                      fill="transparent"
+                      pointerEvents="all"
+                      onMouseEnter={() => setHoveredPointIndex(i)}
+                      onMouseLeave={() => setHoveredPointIndex(null)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    {/* Visible data point */}
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={isHovered ? 6 : isSelected ? 5 : 3}
+                      fill={isHovered || isSelected ? '#3b82f6' : '#e5e7eb'}
+                      stroke="#3b82f6"
+                      strokeWidth="2"
+                      pointerEvents="none"
+                    />
+                    {/* Tooltip */}
+                    {isHovered && (
+                      <>
+                        <rect
+                          x={Math.max(x - 50, 10)}
+                          y={y - 40}
+                          width="100"
+                          height="28"
+                          fill="#ffffff"
+                          stroke="#3b82f6"
+                          strokeWidth="1"
+                          rx="4"
+                          opacity="0.95"
+                          pointerEvents="none"
+                        />
+                        <text
+                          x={Math.max(x - 50, 10) + 50}
+                          y={y - 18}
+                          fontSize="12"
+                          fontWeight="600"
+                          fill="#1f2937"
+                          textAnchor="middle"
+                          pointerEvents="none"
+                        >
+                          {d.cost_per_kg.toFixed(2)}
+                        </text>
+                      </>
+                    )}
+                  </g>
                 );
               })}
 
