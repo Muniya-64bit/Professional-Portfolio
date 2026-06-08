@@ -211,6 +211,14 @@ export const apiService = {
     return this._labour(token, 'PUT', `/plans/${planId}`, data);
   },
 
+  createManualPlan(token, data) {
+    return this._labour(token, 'POST', '/plans/manual/create', data);
+  },
+
+  addAssignmentToPlan(token, planId, data) {
+    return this._labour(token, 'POST', `/plans/${planId}/assignments/add`, data);
+  },
+
   overrideAssignment(token, assignmentId, data) {
     return this._labour(token, 'PUT', `/assignments/${assignmentId}`, data);
   },

@@ -1332,3 +1332,141 @@ def delete_estate(estate_id):
         return _db_err(e)
     finally:
         conn.close()
+
+
+# ── Manual Labour Plan & Assignment (Fallback) ───────────────────────────
+
+@labour_bp.route('/plans/manual/create', methods=['POST'])
+@token_required
+@write_required
+def create_manual_plan():
+    """POST /api/labour/plans/manual/create — create plan without rotation (fallback).
+    
+    Body: {
+      estate_id, period_start, 
+      assignments: [{block_id, worker_group_id, expected_yield_kg?}, ...],
+      total_workers?, target_kg?, status?, notes?
+    }
+    
+    Use when automated cron fails or needs manual override.
+    """
+    data = request.get_json() or {}
+    estate_id = data.get('estate_id')
+    period_raw = data.get('period_start')
+    assignments_data = data.get('assignments', [])
+    user_id = request.user.get('user_id')
+
+    if not estate_id or not period_raw:
+        return jsonify({'error': 'estate_id and period_start required'}), 400
+    if not assignments_data:
+        return jsonify({'error': 'assignments array required (empty list allowed)'}), 400
+
+    period_start = _first_of_month(period_raw)
+    
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Check plan doesn't already exist
+            cur.execute(
+                "SELECT id FROM labour_plan WHERE estate_id = %s AND period_start = %s",
+                (estate_id, period_start)
+            )
+            if cur.fetchone():
+                return jsonify({'error': 'Plan already exists for this period'}), 409
+
+            # Create plan
+            total_workers = data.get('total_workers', 0)
+            target_kg = data.get('target_kg', 0)
+            status = data.get('status', 'draft')
+            notes = data.get('notes') or f'Manual plan created by {user_id}'
+            
+            cur.execute("""
+                INSERT INTO labour_plan (estate_id, created_by, period_start, 
+                                        total_workers, target_kg, status, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (estate_id, user_id, period_start, total_workers, target_kg, status, notes))
+            
+            plan_id = str(cur.fetchone()[0])
+
+            # Create assignments
+            created_count = 0
+            for assign in assignments_data:
+                block_id = assign.get('block_id')
+                group_id = assign.get('worker_group_id')
+                expected_yield = assign.get('expected_yield_kg', 0)
+                
+                if not block_id or not group_id:
+                    continue
+                    
+                cur.execute("""
+                    INSERT INTO block_assignment 
+                    (labour_plan_id, block_id, worker_group_id, expected_yield_kg, 
+                     is_manual_override, override_reason, status)
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 'open')
+                """, (plan_id, block_id, group_id, expected_yield, 
+                      'Manual assignment (cron fallback)'))
+                created_count += 1
+
+            conn.commit()
+        return jsonify({
+            'plan_id': plan_id,
+            'period_start': period_start.isoformat(),
+            'assignments_created': created_count,
+            'message': 'Manual plan created successfully'
+        }), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/plans/<plan_id>/assignments/add', methods=['POST'])
+@token_required
+@write_required
+def add_assignment_to_plan(plan_id):
+    """POST /api/labour/plans/<id>/assignments/add — add group assignment to existing plan.
+    
+    Body: { block_id, worker_group_id, expected_yield_kg? }
+    
+    Use to add missing assignments after plan creation.
+    """
+    data = request.get_json() or {}
+    block_id = data.get('block_id')
+    group_id = data.get('worker_group_id')
+    expected_yield = data.get('expected_yield_kg', 0)
+    
+    if not block_id or not group_id:
+        return jsonify({'error': 'block_id and worker_group_id required'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Verify plan exists
+            cur.execute("SELECT id FROM labour_plan WHERE id = %s", (plan_id,))
+            if not cur.fetchone():
+                return jsonify({'error': 'Plan not found'}), 404
+
+            # Add assignment
+            cur.execute("""
+                INSERT INTO block_assignment 
+                (labour_plan_id, block_id, worker_group_id, expected_yield_kg, 
+                 is_manual_override, override_reason, status)
+                VALUES (%s, %s, %s, %s, TRUE, %s, 'open')
+                ON CONFLICT (labour_plan_id, block_id, worker_group_id) 
+                DO UPDATE SET expected_yield_kg = %s
+            """, (plan_id, block_id, group_id, expected_yield,
+                  'Manual assignment (cron fallback)', expected_yield))
+            
+            conn.commit()
+        return jsonify({'message': 'Assignment added', 'block_id': block_id}), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
