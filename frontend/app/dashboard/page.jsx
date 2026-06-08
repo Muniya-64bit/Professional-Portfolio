@@ -477,6 +477,10 @@ function LabourTab() {
   const [assignSort, setAssignSort]   = useState({ field: 'block_code', dir: 'asc' });
   const [rotSort, setRotSort]         = useState({ field: 'round', dir: 'asc' });
 
+  // Target editing state
+  const [editingTarget, setEditingTarget] = useState(null); // assignment id being edited
+  const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
+
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
   const [empForm, setEmpForm]       = useState({
@@ -794,9 +798,6 @@ function LabourTab() {
           {plan && (
             <div style={{ display: 'flex', gap: 12, marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
               <span className="badge badge-neutral">Month of {plan.period_start}</span>
-              <span className={`badge ${plan.status === 'published' ? 'badge-success' : plan.status === 'completed' ? 'badge-neutral' : 'badge-warning'}`}>
-                {plan.status}
-              </span>
               {plan.cycle_name && (
                 <span className="badge badge-neutral">
                   {plan.cycle_name} · Round {plan.current_round}/{plan.total_rounds}
@@ -847,7 +848,6 @@ function LabourTab() {
                     <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <th>Efficiency</th>
                     <th>Progress</th>
-                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -886,7 +886,37 @@ function LabourTab() {
                             <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
                           </div>
                         </td>
-                        <td>{exp ? Math.round(exp).toLocaleString() : '—'}</td>
+                        <td style={{ fontWeight: 700 }}>
+                          {editingTarget === a.id ? (
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={targetInputs[a.id] ?? exp}
+                              onChange={e => setTargetInputs(p => ({ ...p, [a.id]: parseFloat(e.target.value) || 0 }))}
+                              onBlur={() => setEditingTarget(null)}
+                              onKeyDown={e => e.key === 'Enter' && setEditingTarget(null)}
+                              autoFocus
+                              style={{
+                                width: '100%', padding: '4px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
+                                background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
+                                fontWeight: 700
+                              }}
+                            />
+                          ) : (
+                            <span
+                              onClick={() => {
+                                setEditingTarget(a.id);
+                                setTargetInputs(p => ({ ...p, [a.id]: exp }));
+                              }}
+                              style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: 4,
+                                       hover: { background: 'var(--color-surface-2)' } }}
+                              title="Click to edit"
+                            >
+                              {exp ? Math.round(exp).toLocaleString() : '—'}
+                            </span>
+                          )}
+                        </td>
                         <td style={{ fontWeight: 700 }}>{act ? Math.round(act).toLocaleString() : '—'}</td>
                         <td style={{ fontWeight: 700, color: effColor }}>
                           {act === 0 ? '—' : `${eff.toFixed(1)}%`}
@@ -895,13 +925,6 @@ function LabourTab() {
                           <div className="progress-wrap">
                             {pct > 0 && <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />}
                           </div>
-                        </td>
-                        <td>
-                          <span className={`badge ${
-                            a.status === 'completed'   ? 'badge-success' :
-                            a.status === 'in_progress' ? 'badge-warning' :
-                            a.status === 'cancelled'   ? 'badge-danger'  : 'badge-neutral'
-                          }`}>{a.status}</span>
                         </td>
                       </tr>
                     );
