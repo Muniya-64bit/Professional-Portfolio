@@ -941,7 +941,11 @@ function LabourTab() {
                                   if (!e.target.value) return;
                                   setSavingTarget(true);
                                   try {
-                                    await apiService.changeGroupAssignment(token, a.id, e.target.value);
+                                    if (e.target.value === '__remove__') {
+                                      await apiService.removeAssignment(token, a.id);
+                                    } else {
+                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
+                                    }
                                     const updated = await apiService.getLabourPlan(token, plan.id);
                                     setPlan(updated);
                                     setError('');
