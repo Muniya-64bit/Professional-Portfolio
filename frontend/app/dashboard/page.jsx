@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { apiService } from '../api/apiService';
 import { useAuth } from '../context/AuthContext';
+import { DataEntryModal } from '../components/DataEntryModal';
+import { CSVImportModal } from '../components/CSVImportModal';
 
 /* ── Mock Data ──────────────────────────────────────────────────────────── */
 const estates = [
@@ -241,82 +243,455 @@ function OverviewTab() {
 
 /* ── Tab: ROI ─────────────────────────────────────────────────────────── */
 function ROITab() {
+  const { token } = useAuth();
+  const [estates, setEstates] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [rankings, setRankings] = useState([]);
+  const [estateMonthlyData, setEstateMonthlyData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(null);
+  
+  // Selected filters
+  const [selectedEstateId, setSelectedEstateId] = useState('');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+
+  // Generate year options (last 5 years)
+  const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: i + 1,
+    label: new Date(2000, i, 1).toLocaleString('default', { month: 'long' })
+  }));
+
+  // Load all data
+  const loadROIData = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [estatesData] = await Promise.all([
+        apiService.getROIEstates(token),
+      ]);
+      setEstates(estatesData);
+      if (estatesData.length > 0 && !selectedEstateId) {
+        setSelectedEstateId(estatesData[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load ROI data:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load data for selected filters
+  const loadFilteredData = async () => {
+    if (!selectedEstateId || !selectedYear || !selectedMonth) return;
+    
+    try {
+      const [summaryData, rankingsData, trendData] = await Promise.all([
+        apiService.getROISummary(token, { year: selectedYear, month: selectedMonth }),
+        apiService.getROIRankings(token, { year: selectedYear, month: selectedMonth }),
+        apiService.getROIEstateTrend(token, selectedEstateId, selectedYear),
+      ]);
+      setSummary(summaryData);
+      setRankings(rankingsData);
+      setEstateMonthlyData(trendData);
+    } catch (err) {
+      console.error('Failed to load filtered ROI data:', err);
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      loadROIData();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token && selectedEstateId && selectedYear && selectedMonth) {
+      loadFilteredData();
+    }
+  }, [token, selectedEstateId, selectedYear, selectedMonth]);
+
+  const handleModalClose = () => {
+    setShowModal(false);
+  };
+
+  const handleDataSaved = () => {
+    loadROIData();
+    loadFilteredData();
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+        <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>⏳</div>
+        <p>Loading ROI data…</p>
+      </div>
+    );
+  }
+
+  // Simple line graph for estate ROI over the year
+  const maxCost = Math.max(...estateMonthlyData.map(d => d.cost_per_kg), 1);
+  const graphHeight = 200;
+
   return (
     <>
-      <div className="kpi-grid">
-        <KpiCard icon="🏆" iconBg="kpi-icon-green"  label="Best Cost/kg (Kelani)" value="Rs. 285" unit="" delta={-3.2} />
-        <KpiCard icon="📦" iconBg="kpi-icon-teal"   label="Total Production (Jun)" value="12,450"  unit="kg" delta={-8.3} />
-        <KpiCard icon="📈" iconBg="kpi-icon-blue"   label="Avg Cost / kg (All)"    value="Rs. 310" unit="" delta={+0.5} />
-        <KpiCard icon="🏭" iconBg="kpi-icon-amber"  label="Highest Cost (Ratnapura)" value="Rs. 345" unit="" delta={+2.3} />
+      {/* Filter Controls */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Estate:
+          </label>
+          <select
+            value={selectedEstateId}
+            onChange={e => setSelectedEstateId(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '180px'
+            }}
+          >
+            <option value="">Select Estate</option>
+            {estates.map(estate => (
+              <option key={estate.id} value={estate.id}>{estate.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Year:
+          </label>
+          <select
+            value={selectedYear}
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '120px'
+            }}
+          >
+            {yearOptions.map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Month:
+          </label>
+          <select
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(parseInt(e.target.value))}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '140px'
+            }}
+          >
+            {monthOptions.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <div className="table-wrap">
+      {/* KPI Cards */}
+      <div className="kpi-grid">
+        <KpiCard 
+          icon="🏆" 
+          iconBg="kpi-icon-green"  
+          label="Best Cost/kg" 
+          value={summary?.best_cost_per_kg ? `Rs. ${summary.best_cost_per_kg}` : '—'} 
+          unit="" 
+        />
+        <KpiCard 
+          icon="📦" 
+          iconBg="kpi-icon-teal"   
+          label="Total Estates" 
+          value={summary?.total_estates || '—'}  
+          unit="" 
+        />
+        <KpiCard 
+          icon="📈" 
+          iconBg="kpi-icon-blue"   
+          label="Avg Cost / kg" 
+          value={summary?.avg_cost_per_kg ? `Rs. ${summary.avg_cost_per_kg}` : '—'} 
+          unit="" 
+        />
+        <KpiCard 
+          icon="⚠️" 
+          iconBg="kpi-icon-amber"  
+          label="Flagged Records" 
+          value={summary?.flagged_count || '0'} 
+          unit="" 
+        />
+      </div>
+
+      {/* Estate ROI Graph */}
+      {estateMonthlyData.length > 0 && (
+        <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
+          <div className="section-card-header">
+            <div className="section-card-title">
+              <div className="section-card-title-icon">📈</div>
+              {estates.find(e => e.id === selectedEstateId)?.name || 'Estate'} - ROI Trend {selectedYear}
+            </div>
+          </div>
+          <div className="section-card-body" style={{ paddingBottom: '2rem' }}>
+            <svg
+              width="100%"
+              height={graphHeight}
+              style={{ minHeight: graphHeight }}
+              viewBox={`0 0 1200 ${graphHeight}`}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              {/* Grid lines */}
+              {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+                const y = graphHeight * (1 - pct);
+                const cost = maxCost * pct;
+                return (
+                  <g key={`grid-${i}`}>
+                    <line x1="50" y1={y} x2="1200" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" opacity="0.3" />
+                    <text x="20" y={y + 5} fontSize="12" fill="var(--color-text-muted)" textAnchor="end">
+                      {cost.toFixed(0)}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Line chart */}
+              <polyline
+                points={estateMonthlyData.map((d, i) => {
+                  const x = 100 + (i / 11) * 1100;
+                  const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
+                  return `${x},${y}`;
+                }).join(' ')}
+                fill="none"
+                stroke="var(--color-primary)"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+
+              {/* Data points */}
+              {estateMonthlyData.map((d, i) => {
+                const x = 100 + (i / 11) * 1100;
+                const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
+                const isSelected = i === selectedMonth - 1;
+                return (
+                  <circle
+                    key={`point-${i}`}
+                    cx={x}
+                    cy={y}
+                    r={isSelected ? 6 : 4}
+                    fill={isSelected ? 'var(--color-primary)' : 'var(--color-surface-3)'}
+                    stroke="var(--color-primary)"
+                    strokeWidth="2"
+                  />
+                );
+              })}
+
+              {/* Month labels */}
+              {monthOptions.map((m, i) => {
+                const x = 100 + (i / 11) * 1100;
+                return (
+                  <text key={`label-${i}`} x={x} y={graphHeight - 10} fontSize="12" fill="var(--color-text-muted)" textAnchor="middle">
+                    {m.label.slice(0, 3)}
+                  </text>
+                );
+              })}
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {/* Estate Rankings for Selected Month */}
+      <div className="table-wrap" style={{ marginTop: 'var(--space-6)' }}>
         <div className="table-header-bar">
           <div>
             <div className="table-title">Estate ROI Rankings</div>
-            <div className="table-subtitle">Sorted by cost-per-kg · June 2026</div>
+            <div className="table-subtitle">
+              For {monthOptions.find(m => m.value === selectedMonth)?.label} {selectedYear}
+            </div>
           </div>
-          <span className="badge badge-neutral">4 estates</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'var(--color-primary)',
+                color: '#fff',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.opacity = '0.9';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.opacity = '1';
+              }}
+            >
+              + Add Monthly Data
+            </button>
+            <button
+              onClick={() => setShowCSVImport('costs')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'transparent',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.background = 'var(--color-surface-2)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.background = 'transparent';
+              }}
+            >
+              📥 Import Costs CSV
+            </button>
+            <button
+              onClick={() => setShowCSVImport('yield')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'transparent',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.background = 'var(--color-surface-2)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.background = 'transparent';
+              }}
+            >
+              📥 Import Yield CSV
+            </button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
               <th>Rank</th>
               <th>Estate</th>
-              <th>Location</th>
+              <th>Region</th>
               <th>Cost / kg</th>
-              <th>Production (kg)</th>
-              <th>MoM Δ</th>
-              <th>7-Day Trend</th>
+              <th>Yield (kg)</th>
+              <th>Total Cost</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            {estates.map(e => (
-              <tr key={e.id}>
-                <td><div className={`rank-badge rank-${e.rank}`}>{e.rank}</div></td>
-                <td style={{ fontWeight: 600, color: 'var(--color-text)' }}>{e.name}</td>
-                <td>{e.location}</td>
-                <td style={{ fontWeight: 700, fontSize: '1.05rem' }}>Rs. {e.costPerKg}</td>
-                <td>{e.production.toLocaleString()}</td>
-                <td>
-                  <span className={e.delta < 0 ? 'trend-up' : 'trend-down'} style={{ fontWeight: 600 }}>
-                    {e.delta > 0 ? '↑' : '↓'} {Math.abs(e.delta)}%
-                  </span>
+            {rankings.length === 0 ? (
+              <tr>
+                <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
+                  No ROI data available. Add input costs and yield records to populate rankings.
                 </td>
-                <td style={{ minWidth: 80 }}><Sparkline data={e.trend} height={24} /></td>
               </tr>
-            ))}
+            ) : (
+              rankings.map((e, idx) => (
+                <tr key={idx}>
+                  <td>
+                    <div className={`rank-badge rank-${e.rank || 1}`}>
+                      {e.rank || '—'}
+                    </div>
+                  </td>
+                  <td style={{ fontWeight: '600', color: 'var(--color-text)' }}>{e.estate_name || e.name}</td>
+                  <td>{e.region || '—'}</td>
+                  <td style={{ fontWeight: '700', fontSize: '1.05rem' }}>
+                    {e.cost_per_kg ? `Rs. ${e.cost_per_kg.toFixed(2)}` : '—'}
+                  </td>
+                  <td>{e.yield_kg ? e.yield_kg.toLocaleString() : '—'}</td>
+                  <td>
+                    {e.total_cost ? `Rs. ${e.total_cost.toLocaleString()}` : '—'}
+                  </td>
+                  <td>
+                    {e.is_flagged ? (
+                      <span 
+                        className="badge badge-warning"
+                        title={e.flag_reason}
+                        style={{ cursor: 'help' }}
+                      >
+                        ⚠️ Flagged
+                      </span>
+                    ) : (
+                      <span className="badge badge-success">✓ OK</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Simple horizontal bar chart */}
-      <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
-        <div className="section-card-header">
-          <div className="section-card-title">
-            <div className="section-card-title-icon">📊</div>
-            Cost Per kg Comparison
-          </div>
-        </div>
-        <div className="section-card-body">
-          {estates.map(e => {
-            const maxCost = 400;
-            const pct = (e.costPerKg / maxCost) * 100;
-            const colors = ['progress-green', 'progress-green', 'progress-amber', 'progress-red'];
-            return (
-              <div key={e.id} style={{ marginBottom: 'var(--space-5)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-2)', fontSize: '0.9rem' }}>
-                  <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{e.name}</span>
-                  <span style={{ fontWeight: 700 }}>Rs. {e.costPerKg}</span>
-                </div>
-                <div className="progress-wrap" style={{ height: 12 }}>
-                  <div className={`progress-bar ${colors[e.rank - 1]}`} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Data Entry Modal */}
+      <DataEntryModal
+        isOpen={showModal}
+        onClose={handleModalClose}
+        estates={estates}
+        token={token}
+        onSuccess={handleDataSaved}
+        apiService={apiService}
+      />
+
+      {/* CSV Import Modals */}
+      <CSVImportModal
+        isOpen={showCSVImport === 'costs'}
+        onClose={() => setShowCSVImport(null)}
+        recordType="costs"
+        token={token}
+        apiService={apiService}
+        onSuccess={handleDataSaved}
+        estates={estates}
+      />
+
+      <CSVImportModal
+        isOpen={showCSVImport === 'yield'}
+        onClose={() => setShowCSVImport(null)}
+        recordType="yield"
+        token={token}
+        apiService={apiService}
+        onSuccess={handleDataSaved}
+        estates={estates}
+      />
     </>
   );
 }
@@ -646,6 +1021,7 @@ function LabourTab() {
   const [rotSort, setRotSort]         = useState({ field: 'round', dir: 'asc' });
 
   // Target editing state
+  const [addingGroup, setAddingGroup] = useState(null);   // assignment id showing add-group dropdown
   const [editingTarget, setEditingTarget] = useState(null); // assignment id being edited
   const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
   const [savingTarget, setSavingTarget]   = useState(false);
@@ -676,6 +1052,12 @@ function LabourTab() {
   const [yieldSaving, setYieldSaving] = useState(false);
   const [yieldError, setYieldError]   = useState('');
 
+  // Plan creation modal state
+  const [planCreateModal, setPlanCreateModal] = useState(false);
+  const [planCreateBlocks, setPlanCreateBlocks] = useState([]); // [{...block, groupId:'', expectedYield:''}]
+  const [planCreateLoading, setPlanCreateLoading] = useState(false);
+  const [planCreateError, setPlanCreateError] = useState('');
+
   // First day of the current month (YYYY-MM-01)
   const monthStart = (() => {
     const d = new Date();
@@ -702,7 +1084,11 @@ function LabourTab() {
     const load = async () => {
       try {
         if (view === 'month') {
-          const plans = await apiService.getLabourPlans(token, { estateId, monthStart });
+          const [plans, grps] = await Promise.all([
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+            apiService.getWorkerGroups(token, estateId),
+          ]);
+          setGroups(grps);
           if (plans.length > 0) {
             const detail = await apiService.getLabourPlan(token, plans[0].id);
             setPlan(detail);
@@ -710,8 +1096,17 @@ function LabourTab() {
             setPlan(null);
           }
         } else if (view === 'rotation') {
-          const r = await apiService.getRotation(token, estateId);
-          setRotation(r.length > 0 ? r[0] : null);
+          const [rotData, plans] = await Promise.all([
+            apiService.getRotation(token, estateId),
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+          ]);
+          setRotation(rotData.length > 0 ? rotData[0] : null);
+          if (plans.length > 0) {
+            const detail = await apiService.getLabourPlan(token, plans[0].id);
+            setPlan(detail);
+          } else {
+            setPlan(null);
+          }
         } else if (view === 'employees') {
           const [emps, grps] = await Promise.all([
             apiService.getEmployees(token, { estateId }),
@@ -1029,6 +1424,25 @@ function LabourTab() {
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
               <p>No labour plan for this month yet.</p>
+              <button onClick={async () => {
+                setPlanCreateError('');
+                setPlanCreateLoading(true);
+                try {
+                  const [blocks, grps] = await Promise.all([
+                    apiService.getBlocks(token, estateId),
+                    apiService.getWorkerGroups(token, estateId),
+                  ]);
+                  setGroups(grps);
+                  setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                  setPlanCreateModal(true);
+                } catch (e) {
+                  setError(e.message);
+                } finally {
+                  setPlanCreateLoading(false);
+                }
+              }} disabled={loading || planCreateLoading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem' }}>
+                {planCreateLoading ? 'Loading...' : '+ Create Plan'}
+              </button>
             </div>
           ) : (
             <div className="table-wrap">
@@ -1039,7 +1453,28 @@ function LabourTab() {
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
                 </div>
-                <span className="badge badge-neutral">{assignments.length} blocks</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="badge badge-neutral">{assignments.length} blocks</span>
+                  <button onClick={async () => {
+                    setPlanCreateError('');
+                    setPlanCreateLoading(true);
+                    try {
+                      const [blocks, grps] = await Promise.all([
+                        apiService.getBlocks(token, estateId),
+                        apiService.getWorkerGroups(token, estateId),
+                      ]);
+                      setGroups(grps);
+                      // Only show blocks not already in the plan
+                      const assignedCodes = new Set(assignments.map(a => a.block_code));
+                      const unassigned = blocks.filter(b => !assignedCodes.has(b.block_code));
+                      setPlanCreateBlocks(unassigned.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                      setPlanCreateModal(true);
+                    } catch (e) { setError(e.message); }
+                    finally { setPlanCreateLoading(false); }
+                  }} disabled={planCreateLoading} style={{ padding: '5px 14px', borderRadius: 7, border: '1.5px dashed var(--color-primary)', background: 'transparent', color: 'var(--color-primary)', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    {planCreateLoading ? '…' : '+ Add Blocks'}
+                  </button>
+                </div>
               </div>
               <table>
                 <thead>
@@ -1055,6 +1490,29 @@ function LabourTab() {
                   </tr>
                 </thead>
                 <tbody>
+                  {sortedAssignments.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                        No block assignments yet.
+                        <button onClick={async () => {
+                          setPlanCreateError('');
+                          setPlanCreateLoading(true);
+                          try {
+                            const [blocks, grps] = await Promise.all([
+                              apiService.getBlocks(token, estateId),
+                              apiService.getWorkerGroups(token, estateId),
+                            ]);
+                            setGroups(grps);
+                            setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                            setPlanCreateModal(true);
+                          } catch (e) { setError(e.message); }
+                          finally { setPlanCreateLoading(false); }
+                        }} style={{ marginLeft: 12, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                          + Add Blocks
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {sortedAssignments.map(a => {
                     const exp = a.expected_yield_kg || 0;
                     const act = a.actual_yield_kg   || 0;
@@ -1069,7 +1527,7 @@ function LabourTab() {
                       <tr key={a.id}>
                         <td style={{ fontWeight: 700, color: 'var(--color-text)' }}>
                           {a.block_code}
-                          {a.is_manual_override && (
+                          {a.is_manual_override && a.original_group_name && (
                             <span title={a.override_reason || 'Manually overridden'}
                                   style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--color-warning)', fontWeight: 600 }}>
                               ✎
@@ -1077,11 +1535,70 @@ function LabourTab() {
                           )}
                         </td>
                         <td style={{ fontSize: '0.875rem' }}>
-                          <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name || '—'}</div>
-                          {a.is_manual_override && a.original_group_name && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-                              was: {a.original_group_name}
+                          {a.group_name ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name}</div>
+                              {a.is_manual_override && a.original_group_name && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                  (was: {a.original_group_name})
+                                </div>
+                              )}
+                              {(canWrite || isManager) && (
+                                <button
+                                  onClick={async () => {
+                                    setSavingTarget(true);
+                                    try {
+                                      await apiService.removeGroupFromAssignment(token, a.id);
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setError('');
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
+                                  }}
+                                  disabled={savingTarget}
+                                  style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.4)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                >
+                                  Remove
+                                </button>
+                              )}
                             </div>
+                          ) : (canWrite || isManager) && (
+                            addingGroup === a.id ? (
+                              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                <select
+                                  autoFocus
+                                  defaultValue=""
+                                  disabled={savingTarget}
+                                  onChange={async (e) => {
+                                    if (!e.target.value) return;
+                                    setSavingTarget(true);
+                                    try {
+                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setAddingGroup(null);
+                                      setError('');
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
+                                  }}
+                                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-primary)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 120 }}
+                                >
+                                  <option value="">Select group…</option>
+                                  {groups
+                                    .filter(g => !assignments.some(ax => ax.worker_group_id && String(ax.worker_group_id) === String(g.id)))
+                                    .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                                  }
+                                </select>
+                                <button onClick={() => setAddingGroup(null)} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setAddingGroup(a.id)}
+                                style={{ padding: '4px 12px', borderRadius: 6, border: '1.5px dashed var(--color-warning)', background: 'transparent', color: 'var(--color-warning)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                              >
+                                + Add Group
+                              </button>
+                            )
                           )}
                         </td>
                         <td>
@@ -1341,25 +1858,46 @@ function LabourTab() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRotationRows.map(([rn, cells]) => (
-                  <tr key={rn} style={{
-                    background: parseInt(rn) === rotation.current_round
-                      ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
-                  }}>
-                    <td style={{ fontWeight: 700 }}>
-                      Round {rn}
-                      {parseInt(rn) === rotation.current_round && (
-                        <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
-                      )}
-                    </td>
-                    {cells.map(c => (
-                      <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
-                        <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                {sortedRotationRows.map(([rn, cells]) => {
+                  const isCurrent = parseInt(rn) === rotation.current_round;
+                  // For the current round, build actual assignment lookup from plan
+                  const actualByBlock = isCurrent && plan
+                    ? Object.fromEntries((plan.assignments || []).map(a => [a.block_code, a]))
+                    : null;
+                  return (
+                    <tr key={rn} style={{
+                      background: isCurrent ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
+                    }}>
+                      <td style={{ fontWeight: 700 }}>
+                        Round {rn}
+                        {isCurrent && (
+                          <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
+                        )}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      {cells.map(c => {
+                        const actual = actualByBlock?.[c.block_code];
+                        const changed = actual && actual.group_code !== c.group_code;
+                        return (
+                          <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                            {actual ? (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                                  {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
+                                </div>
+                                <div style={{ fontSize: '0.7rem' }}>{actual.group_capacity ?? c.capacity} workers</div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
+                                <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                              </>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1688,6 +2226,127 @@ function LabourTab() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Plan Creation Modal ── */}
+      {planCreateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 14, padding: 0, width: '90%', maxWidth: 820, maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.35)' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-text)' }}>{plan ? 'Add Blocks to Plan' : 'Create Labour Plan'}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{monthStart} — assign groups and set expected yields for each block</div>
+              </div>
+              <button onClick={() => setPlanCreateModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--color-text-muted)', padding: '4px 8px' }}>✕</button>
+            </div>
+
+            {/* Block table */}
+            <div style={{ overflowY: 'auto', flex: 1, padding: '0 24px' }}>
+              {planCreateBlocks.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)', padding: '32px 0', textAlign: 'center' }}>No blocks found for this estate.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Block</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>State</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Area (ha)</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Worker Group</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Expected Yield (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planCreateBlocks.map((b, idx) => (
+                      <tr key={b.id} style={{ borderBottom: '1px solid var(--color-border)', background: idx % 2 === 0 ? 'transparent' : 'var(--color-surface-2)' }}>
+                        <td style={{ padding: '10px 8px', fontWeight: 700 }}>{b.block_code}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>{b.state || 'active'}</span>
+                        </td>
+                        <td style={{ padding: '10px 8px', color: 'var(--color-text-muted)' }}>{b.area_hectares ?? '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <select
+                            value={b.groupId}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, groupId: e.target.value } : x))}
+                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 140 }}
+                          >
+                            <option value="">— Unassigned —</option>
+                            {groups
+                              .filter(g => !planCreateBlocks.some((x, i) => i !== idx && x.groupId && String(x.groupId) === String(g.id)))
+                              .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                            }
+                          </select>
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={b.expectedYield}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, expectedYield: e.target.value } : x))}
+                            style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem' }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {planCreateError && <div style={{ padding: '8px 24px', color: 'var(--color-danger)', fontSize: '0.8rem' }}>{planCreateError}</div>}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setPlanCreateModal(false)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontWeight: 500 }}>Cancel</button>
+              <button
+                disabled={planCreateLoading || planCreateBlocks.length === 0}
+                onClick={async () => {
+                  setPlanCreateLoading(true);
+                  setPlanCreateError('');
+                  try {
+                    let updatedPlan;
+                    if (plan) {
+                      // Add blocks to existing plan
+                      for (const b of planCreateBlocks) {
+                        await apiService.addAssignmentToPlan(token, plan.id, {
+                          block_id: b.id,
+                          worker_group_id: b.groupId || null,
+                          expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                        });
+                      }
+                      updatedPlan = await apiService.getLabourPlan(token, plan.id);
+                    } else {
+                      // Create new plan with all blocks
+                      const assignmentList = planCreateBlocks.map(b => ({
+                        block_id: b.id,
+                        worker_group_id: b.groupId || null,
+                        expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                      }));
+                      const result = await apiService.createManualPlan(token, {
+                        estate_id: estateId,
+                        period_start: monthStart,
+                        assignments: assignmentList,
+                        status: 'draft',
+                        notes: 'Manual plan creation',
+                      });
+                      updatedPlan = await apiService.getLabourPlan(token, result.plan_id);
+                    }
+                    setPlan(updatedPlan);
+                    setPlanCreateModal(false);
+                    setError('');
+                  } catch (e) {
+                    setPlanCreateError(e.message);
+                  } finally {
+                    setPlanCreateLoading(false);
+                  }
+                }}
+                style={{ padding: '8px 24px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, cursor: planCreateLoading ? 'not-allowed' : 'pointer', opacity: planCreateLoading ? 0.7 : 1 }}
+              >
+                {planCreateLoading ? (plan ? 'Adding…' : 'Creating…') : (plan ? 'Add Blocks' : 'Create Plan')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Record Yield Modal (top-level so it works from any sub-view) ── */}
@@ -2297,29 +2956,57 @@ function ReportTab() {
   );
 }
 
-/* ── Nav Items Config ─────────────────────────────────────────────────── */
-/* ── Tab: Blocks Management ───────────────────────────────────── */
-function BlocksTab() {
+/* ── Tab: Estates & Blocks ────────────────────────────────────── */
+function EstateBlocksTab() {
   const { token, canWrite, isManager } = useAuth();
   const [estates, setEstates] = useState([]);
-  const [estateId, setEstateId] = useState('');
+  const [selectedEstate, setSelectedEstate] = useState(null);
   const [blocks, setBlocks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [editingEstate, setEditingEstate] = useState(null);
   const [editingBlock, setEditingBlock] = useState(null);
-  const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' });
+  const [estateForm, setEstateForm] = useState({ name: '', region: '' });
+  const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
   const [saving, setSaving] = useState(false);
+  const stateOptions = ['preparation', 'planting', 'growing', 'harvesting', 'fallow', 'maintenance', 'active'];
 
   useEffect(() => {
     if (!token) return;
-    apiService.getEstates(token).then(data => { setEstates(data); if (data.length > 0) setEstateId(data[0].id); }).catch(() => {});
+    setLoading(true);
+    apiService.getEstates(token).then(data => { setEstates(data || []); if (data.length > 0) setSelectedEstate(data[0]); }).catch(e => setError(e.message)).finally(() => setLoading(false));
   }, [token]);
 
   useEffect(() => {
-    if (!token || !estateId) return;
-    setLoading(true);
-    apiService.getBlocks(token, estateId).then(data => setBlocks(data || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, [token, estateId]);
+    if (!token || !selectedEstate) return;
+    apiService.getBlocks(token, selectedEstate.id).then(data => setBlocks(data || [])).catch(e => setError(e.message));
+  }, [token, selectedEstate]);
+
+  const handleSaveEstate = async () => {
+    if (!estateForm.name || !estateForm.region) { setError('Name and region required'); return; }
+    setSaving(true);
+    try {
+      if (editingEstate && editingEstate !== 'new') {
+        await apiService.updateEstate(token, editingEstate.id, estateForm);
+      } else {
+        await apiService.createEstate(token, estateForm);
+      }
+      setEditingEstate(null); setEstateForm({ name: '', region: '' });
+      const updated = await apiService.getEstates(token);
+      setEstates(updated); setError('');
+      if (editingEstate === 'new' && updated.length > 0) setSelectedEstate(updated[updated.length - 1]);
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+
+  const handleDeleteEstate = async (estateId) => {
+    if (!confirm('Delete estate & all blocks/employees/plans?')) return;
+    try {
+      await apiService.deleteEstate(token, estateId);
+      const updated = await apiService.getEstates(token);
+      setEstates(updated);
+      if (selectedEstate?.id === estateId) setSelectedEstate(updated[0] || null);
+    } catch (e) { setError(e.message); }
+  };
 
   const handleSaveBlock = async () => {
     if (!blockForm.block_code) { setError('Block code required'); return; }
@@ -2328,10 +3015,10 @@ function BlocksTab() {
       if (editingBlock && editingBlock !== 'new') {
         await apiService.updateBlock(token, editingBlock.id, blockForm);
       } else {
-        await apiService.createBlock(token, { estate_id: estateId, ...blockForm });
+        await apiService.createBlock(token, { estate_id: selectedEstate.id, ...blockForm });
       }
-      setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' });
-      const updated = await apiService.getBlocks(token, estateId);
+      setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
+      const updated = await apiService.getBlocks(token, selectedEstate.id);
       setBlocks(updated); setError('');
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -2340,64 +3027,107 @@ function BlocksTab() {
     if (!confirm('Delete block?')) return;
     try {
       await apiService.deleteBlock(token, blockId);
-      const updated = await apiService.getBlocks(token, estateId);
+      const updated = await apiService.getBlocks(token, selectedEstate.id);
       setBlocks(updated);
     } catch (e) { setError(e.message); }
   };
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)' }}>
-        <div><div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5 }}>ESTATE</div>
-          <select value={estateId} onChange={e => setEstateId(e.target.value)} disabled={!canWrite} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', width: '200px' }}>
-            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
-        {(canWrite || isManager) && (
-          <button onClick={() => { setEditingBlock('new'); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' }); }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Block</button>
-        )}
-      </div>
-
       {error && <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 'var(--space-4)' }}>{error}</div>}
 
-      {editingBlock && (
-        <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
-          <div className="section-card-header"><div className="section-card-title">{editingBlock === 'new' ? 'Create Block' : 'Edit Block'}</div></div>
-          <div className="section-card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
-              <input type="text" placeholder="Block Code" value={blockForm.block_code} onChange={e => setBlockForm(p => ({ ...p, block_code: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="text" placeholder="Soil Type" value={blockForm.soil_type} onChange={e => setBlockForm(p => ({ ...p, soil_type: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="text" placeholder="Growth Stage" value={blockForm.growth_stage} onChange={e => setBlockForm(p => ({ ...p, growth_stage: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="number" step="0.01" placeholder="Area (hectares)" value={blockForm.area_hectares} onChange={e => setBlockForm(p => ({ ...p, area_hectares: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-              <button onClick={handleSaveBlock} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-5)' }}>
+        {/* Estates Panel */}
+        <div className="table-wrap">
+          <div className="table-header-bar"><div><div className="table-title">Estates</div><div className="table-subtitle">{estates.length} total</div></div></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 'var(--space-4)' }}>
+            {(canWrite || isManager) && (
+              <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', width: '100%' }}>+ New Estate</button>
+            )}
+            {editingEstate && (
+              <div style={{ padding: 'var(--space-3)', background: 'var(--color-surface)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
+                <input type="text" placeholder="Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
+                <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Cancel</button>
+                  <button onClick={handleSaveEstate} disabled={saving} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? '...' : 'Save'}</button>
+                </div>
+              </div>
+            )}
+            {loading ? <div style={{ padding: 'var(--space-4)', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Loading…</div> : (
+              estates.map(e => (
+                <div key={e.id} style={{ padding: 'var(--space-3)', borderRadius: 6, border: selectedEstate?.id === e.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', background: selectedEstate?.id === e.id ? 'var(--color-surface-2)' : 'transparent', cursor: 'pointer' }}>
+                  <div onClick={() => setSelectedEstate(e)} style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>{e.name}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 6 }}>{e.region} • {e.block_count || 0} blocks</div>
+                  {(canWrite || isManager) && (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Edit</button>
+                      <button onClick={() => handleDeleteEstate(e.id)} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Del</button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
-      )}
 
-      <div className="table-wrap">
-        <div className="table-header-bar"><div><div className="table-title">Plantation Blocks</div><div className="table-subtitle">{blocks.length} blocks</div></div></div>
-        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div> : blocks.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No blocks</div> : (
-          <table>
-            <thead><tr><th>Code</th><th>Soil</th><th>Stage</th><th>Area (ha)</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
-            <tbody>{blocks.map(b => (
-              <tr key={b.id}><td style={{ fontWeight: 600 }}>{b.block_code}</td><td>{b.soil_type || '—'}</td><td>{b.growth_stage || '—'}</td><td>{b.area_hectares || '—'}</td>
-              {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingBlock(b); setBlockForm(b); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteBlock(b.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
+        {/* Blocks Panel */}
+        <div>
+          {selectedEstate && (
+            <>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 'var(--space-5)' }}>
+                <div><div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>SELECTED</div><div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{selectedEstate.name}</div></div>
+                {(canWrite || isManager) && (
+                  <button onClick={() => { setEditingBlock('new'); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ marginLeft: 'auto', padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Block</button>
+                )}
+              </div>
+
+              {editingBlock && (
+                <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
+                  <div className="section-card-header"><div className="section-card-title">{editingBlock === 'new' ? 'Create Block' : 'Edit Block'}</div></div>
+                  <div className="section-card-body">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
+                      <input type="text" placeholder="Block Code" value={blockForm.block_code} onChange={e => setBlockForm(p => ({ ...p, block_code: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="text" placeholder="Soil Type" value={blockForm.soil_type} onChange={e => setBlockForm(p => ({ ...p, soil_type: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="text" placeholder="Growth Stage" value={blockForm.growth_stage} onChange={e => setBlockForm(p => ({ ...p, growth_stage: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="number" step="0.01" placeholder="Area (hectares)" value={blockForm.area_hectares} onChange={e => setBlockForm(p => ({ ...p, area_hectares: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <select value={blockForm.state} onChange={e => setBlockForm(p => ({ ...p, state: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem', gridColumn: '1 / -1' }}>
+                        {stateOptions.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                      <button onClick={() => { setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                      <button onClick={handleSaveBlock} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="table-wrap">
+                <div className="table-header-bar"><div><div className="table-title">Blocks</div><div className="table-subtitle">{blocks.length} blocks</div></div></div>
+                {blocks.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No blocks. Create one to get started!</div> : (
+                  <table>
+                    <thead><tr><th>Code</th><th>Soil</th><th>Stage</th><th>Area (ha)</th><th>State</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
+                    <tbody>{blocks.map(b => (
+                      <tr key={b.id}><td style={{ fontWeight: 600 }}>{b.block_code}</td><td>{b.soil_type || '—'}</td><td>{b.growth_stage || '—'}</td><td>{b.area_hectares || '—'}</td><td><span className={`badge badge-${b.state === 'active' ? 'success' : b.state === 'harvesting' ? 'warning' : 'neutral'}`}>{b.state.charAt(0).toUpperCase() + b.state.slice(1)}</span></td>
+                      {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingBlock(b); setBlockForm(b); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteBlock(b.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
+
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
-  { id: 'blocks',      icon: '🏘️', label: 'Blocks Management' },
+  { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
   { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
   { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
@@ -2408,7 +3138,7 @@ const navItems = [
 
 const tabTitles = {
   overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
-  blocks:     { title: 'Blocks Management',  sub: 'View, add, edit and manage all plantation blocks' },
+  'estate-blocks': { title: 'Estates & Blocks',  sub: 'Manage all estates and their plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
   fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
@@ -2422,6 +3152,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, loading, logout, token } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fertOverdueCount, setFertOverdueCount] = useState(0);
 
   useEffect(() => {
@@ -2457,7 +3188,7 @@ export default function DashboardPage() {
   return (
     <div className="dash-layout">
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="dash-sidebar">
+      <aside className={`dash-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="dash-sidebar-logo">
           <img src="/logo.png" alt="KVPL Logo" className="dash-sidebar-logo-mark" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
           <div className="dash-sidebar-brand">
@@ -2473,9 +3204,10 @@ export default function DashboardPage() {
               key={item.id}
               className={`dash-nav-item ${activeTab === item.id ? 'active' : ''}`}
               onClick={() => setActiveTab(item.id)}
+              title={sidebarCollapsed ? item.label : undefined}
             >
               <span className="dash-nav-icon">{item.icon}</span>
-              {item.label}
+              <span className="dash-nav-item-label">{item.label}</span>
               {item.id === 'fertilizer' && fertOverdueCount > 0 && (
                 <span className="dash-nav-badge">{fertOverdueCount}</span>
               )}
@@ -2483,11 +3215,17 @@ export default function DashboardPage() {
           ))}
         </nav>
 
-        
+        <button
+          className="dash-sidebar-toggle"
+          onClick={() => setSidebarCollapsed(c => !c)}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed ? '›' : '‹'}
+        </button>
       </aside>
 
       {/* ── Main Area ────────────────────────────────────────── */}
-      <div className="dash-main">
+      <div className={`dash-main${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         {/* Top Bar */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">
@@ -2528,7 +3266,7 @@ export default function DashboardPage() {
           </div>
 
           {activeTab === 'overview'    && <OverviewTab />}
-          {activeTab === 'blocks'      && <BlocksTab />}
+          {activeTab === 'estate-blocks' && <EstateBlocksTab />}
           {activeTab === 'roi'         && <ROITab />}
           {activeTab === 'water'       && <WaterTab />}
           {activeTab === 'fertilizer'  && <FertilizerTab />}

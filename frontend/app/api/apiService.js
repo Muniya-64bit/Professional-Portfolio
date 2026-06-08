@@ -164,6 +164,18 @@ export const apiService = {
     return this._labour(token, 'GET', '/estates');
   },
 
+  createEstate(token, data) {
+    return this._labour(token, 'POST', '/estates', data);
+  },
+
+  updateEstate(token, estateId, data) {
+    return this._labour(token, 'PUT', `/estates/${estateId}`, data);
+  },
+
+  deleteEstate(token, estateId) {
+    return this._labour(token, 'DELETE', `/estates/${estateId}`);
+  },
+
   getLabourPlans(token, { estateId, monthStart } = {}) {
     const q = new URLSearchParams();
     if (estateId)   q.set('estate_id',    estateId);
@@ -199,8 +211,28 @@ export const apiService = {
     return this._labour(token, 'PUT', `/plans/${planId}`, data);
   },
 
+  createManualPlan(token, data) {
+    return this._labour(token, 'POST', '/plans/manual/create', data);
+  },
+
+  addAssignmentToPlan(token, planId, data) {
+    return this._labour(token, 'POST', `/plans/${planId}/assignments/add`, data);
+  },
+
   overrideAssignment(token, assignmentId, data) {
     return this._labour(token, 'PUT', `/assignments/${assignmentId}`, data);
+  },
+
+  changeGroupAssignment(token, assignmentId, workerGroupId) {
+    return this._labour(token, 'PUT', `/assignments/${assignmentId}/change-group`, { worker_group_id: workerGroupId });
+  },
+
+  removeAssignment(token, assignmentId) {
+    return this._labour(token, 'DELETE', `/assignments/${assignmentId}/remove`);
+  },
+
+  removeGroupFromAssignment(token, assignmentId) {
+    return this._labour(token, 'PUT', `/assignments/${assignmentId}/remove-group`);
   },
 
   addEmployeeOverride(token, assignmentId, data) {
@@ -421,6 +453,70 @@ export const apiService = {
 
   updateWaterUsage(token, usageId, data) {
     return this._water(token, 'PUT', `/usage/${usageId}`, data);
+  },
+
+  // ── ROI Calculator ────────────────────────────────────────────────────────
+
+  async _roi(token, method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      credentials: 'include',
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}/roi${path}`, opts);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
+  },
+
+  getInputCosts(token, { estateId, year, month } = {}) {
+    const q = new URLSearchParams();
+    if (estateId) q.set('estate_id', estateId);
+    if (year) q.set('year', year);
+    if (month) q.set('month', month);
+    return this._roi(token, 'GET', `/input-costs${q.toString() ? '?' + q : ''}`);
+  },
+
+  createInputCost(token, data) {
+    return this._roi(token, 'POST', '/input-costs', data);
+  },
+
+  getYieldRecords(token, { estateId, year, month } = {}) {
+    const q = new URLSearchParams();
+    if (estateId) q.set('estate_id', estateId);
+    if (year) q.set('year', year);
+    if (month) q.set('month', month);
+    return this._roi(token, 'GET', `/yield-records${q.toString() ? '?' + q : ''}`);
+  },
+
+  createYieldRecord(token, data) {
+    return this._roi(token, 'POST', '/yield-records', data);
+  },
+
+  getROISummary(token, params = {}) {
+  const qs = new URLSearchParams();
+  if (params.months) qs.set('months', params.months);
+  if (params.year)   qs.set('year',   params.year);
+  if (params.month)  qs.set('month',  params.month);
+  return this._roi(token, 'GET', `/summary${qs.toString() ? '?' + qs : ''}`);
+},
+
+  getROIRankings(token, params = {}) {
+    const qs = new URLSearchParams();
+    if (params.months) qs.set('months', params.months);
+    if (params.year)   qs.set('year',   params.year);
+    if (params.month)  qs.set('month',  params.month);
+    return this._roi(token, 'GET', `/rankings${qs.toString() ? '?' + qs : ''}`);
+  },
+
+  getROIEstates(token) {
+    return this._roi(token, 'GET', '/estates');
+  },
+
+  getROIEstateTrend(token, estateId, year) {
+    const q = new URLSearchParams({ estate_id: estateId, year });
+    return this._roi(token, 'GET', `/estate-trend?${q}`);
   },
   
   // Helper: Decode JWT token to get expiration time

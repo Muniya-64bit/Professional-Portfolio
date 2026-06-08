@@ -14,6 +14,7 @@ from auth import (
 from labour import labour_bp
 from water import water_bp
 from reports import reports_bp
+from roi import roi_bp
 from fertilizer import fertilizer_bp
 from scheduler import start_scheduler
 
@@ -25,17 +26,16 @@ logger = logging.getLogger(__name__)
 ALLOWED_SIGNUP_ROLES = {'admin', 'estate_manager', 'manager'}
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, 
+     origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
 app.register_blueprint(reports_bp)
 app.register_blueprint(fertilizer_bp)
-
-# Start the monthly labour-plan scheduler under a WSGI server (gunicorn imports
-# this module as 'app'). For the `python app.py` dev runner it is started in the
-# __main__ block below instead, so the debug reloader doesn't double-start it.
-if __name__ != "__main__":
-    start_scheduler()
+app.register_blueprint(roi_bp)
 
 # Basic routes
 @app.route("/", methods=["GET"])

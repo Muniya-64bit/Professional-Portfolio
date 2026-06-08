@@ -364,7 +364,8 @@ def get_plan(plan_id):
                 return jsonify({'error': 'Forbidden'}), 403
 
             cur.execute("""
-                SELECT ba.id, b.block_code, b.worker_capacity,
+                SELECT ba.id, ba.block_id, b.block_code, b.worker_capacity,
+                       wg.id AS worker_group_id,
                        wg.group_name, wg.group_code, wg.capacity AS group_capacity,
                        ba.assignment_date, ba.rotation_round, ba.is_manual_override,
                        ba.expected_yield_kg, ba.actual_yield_kg,
@@ -720,8 +721,6 @@ def update_employee(employee_id):
                     cur.execute("""
                         INSERT INTO worker_group_member (group_id, employee_id, joined_date, is_active)
                         VALUES (%s, %s, CURRENT_DATE, TRUE)
-                        ON CONFLICT (group_id, employee_id)
-                        DO UPDATE SET is_active = TRUE, left_date = NULL, updated_at = NOW()
                     """, (group_id, employee_id))
                     # If skill_type is 'supervisor', set as supervisor for this group
                     if updates.get('skill_type') == 'supervisor':
@@ -1141,7 +1140,7 @@ def list_blocks():
     try:
         with conn.cursor() as cur:
             sql = """
-                SELECT id, estate_id, block_code, soil_type, growth_stage, area_hectares
+                SELECT id, estate_id, block_code, soil_type, growth_stage, area_hectares, state
                 FROM block WHERE estate_id = %s
                 ORDER BY block_code
             """
@@ -1174,8 +1173,8 @@ def create_block():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO block (estate_id, block_code, soil_type, growth_stage, area_hectares)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO block (estate_id, block_code, soil_type, growth_stage, area_hectares, state)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 estate_id,
@@ -1183,6 +1182,7 @@ def create_block():
                 data.get('soil_type'),
                 data.get('growth_stage'),
                 data.get('area_hectares'),
+                data.get('state', 'active'),
             ))
             block_id = str(cur.fetchone()[0])
             conn.commit()
@@ -1200,7 +1200,7 @@ def create_block():
 def update_block(block_id):
     """PUT /api/labour/blocks/<id> — update block details."""
     data = request.get_json() or {}
-    allowed = {'block_code', 'soil_type', 'growth_stage', 'area_hectares'}
+    allowed = {'block_code', 'soil_type', 'growth_stage', 'area_hectares', 'state'}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'No valid fields'}), 400
@@ -1242,6 +1242,351 @@ def delete_block(block_id):
     except Exception as e:
         conn.rollback()
         logger.error("Delete block error: %s", str(e), exc_info=True)
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+# ── Estate Management ──────────────────────────────────────────────
+
+@labour_bp.route('/estates', methods=['POST'])
+@token_required
+@write_required
+def create_estate():
+    """POST /api/labour/estates — create a new estate."""
+    data = request.get_json() or {}
+    required = ('name', 'region')
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'error': f'Missing: {", ".join(missing)}'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO estate (name, region, total_blocks)
+                VALUES (%s, %s, 0)
+                RETURNING id, name, region
+            """, (data['name'], data['region']))
+            row = cur.fetchone()
+            conn.commit()
+        return jsonify({'id': str(row[0]), 'name': row[1], 'region': row[2], 'message': 'Estate created'}), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/estates/<estate_id>', methods=['PUT'])
+@token_required
+@write_required
+def update_estate(estate_id):
+    """PUT /api/labour/estates/<id> — update estate details."""
+    data = request.get_json() or {}
+    allowed = {'name', 'region'}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'No valid fields'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sets = ', '.join(f"{k} = %s" for k in updates)
+            params = list(updates.values()) + [estate_id]
+            cur.execute(f"UPDATE estate SET {sets} WHERE id = %s", params)
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Estate not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Estate updated'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/estates/<estate_id>', methods=['DELETE'])
+@token_required
+@write_required
+def delete_estate(estate_id):
+    """DELETE /api/labour/estates/<id> — delete an estate."""
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM estate WHERE id = %s", (estate_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Estate not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Estate deleted'}), 200
+    except Exception as e:
+        conn.rollback()
+        logger.error("Delete estate error: %s", str(e), exc_info=True)
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+# ── Manual Labour Plan & Assignment (Fallback) ───────────────────────────
+
+@labour_bp.route('/plans/manual/create', methods=['POST'])
+@token_required
+@write_required
+def create_manual_plan():
+    """POST /api/labour/plans/manual/create — create plan without rotation (fallback).
+    
+    Body: {
+      estate_id, period_start, 
+      assignments: [{block_id, worker_group_id, expected_yield_kg?}, ...],
+      total_workers?, target_kg?, status?, notes?
+    }
+    
+    Use when automated cron fails or needs manual override.
+    """
+    data = request.get_json() or {}
+    estate_id = data.get('estate_id')
+    period_raw = data.get('period_start')
+    assignments_data = data.get('assignments', [])
+    user_id = request.user.get('user_id')
+
+    if not estate_id or not period_raw:
+        return jsonify({'error': 'estate_id and period_start required'}), 400
+    if assignments_data is None:
+        return jsonify({'error': 'assignments must be a list'}), 400
+
+    period_start = _first_of_month(period_raw)
+    
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Check plan doesn't already exist
+            cur.execute(
+                "SELECT id FROM labour_plan WHERE estate_id = %s AND period_start = %s",
+                (estate_id, period_start)
+            )
+            if cur.fetchone():
+                return jsonify({'error': 'Plan already exists for this period'}), 409
+
+            # Create plan
+            total_workers = data.get('total_workers', 0)
+            target_kg = data.get('target_kg', 0)
+            status = data.get('status', 'draft')
+            notes = data.get('notes') or f'Manual plan created by {user_id}'
+            
+            cur.execute("""
+                INSERT INTO labour_plan (estate_id, created_by, period_start, 
+                                        total_workers, target_kg, status, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (estate_id, user_id, period_start, total_workers, target_kg, status, notes))
+            
+            plan_id = str(cur.fetchone()[0])
+
+            # Create assignments (group_id may be None for unassigned blocks)
+            created_count = 0
+            for assign in assignments_data:
+                block_id = assign.get('block_id')
+                group_id = assign.get('worker_group_id') or None
+                expected_yield = assign.get('expected_yield_kg') or 0
+
+                if not block_id:
+                    continue
+
+                cur.execute("""
+                    INSERT INTO block_assignment
+                    (labour_plan_id, block_id, worker_group_id, expected_yield_kg,
+                     is_manual_override, override_reason, status, assignment_date)
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 'scheduled', CURRENT_DATE)
+                """, (plan_id, block_id, group_id, expected_yield,
+                      'Manual plan creation'))
+                created_count += 1
+
+            conn.commit()
+        return jsonify({
+            'plan_id': plan_id,
+            'period_start': period_start.isoformat(),
+            'assignments_created': created_count,
+            'message': 'Manual plan created successfully'
+        }), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/plans/<plan_id>/assignments/add', methods=['POST'])
+@token_required
+@write_required
+def add_assignment_to_plan(plan_id):
+    """POST /api/labour/plans/<id>/assignments/add — add group assignment to existing plan.
+    
+    Body: { block_id, worker_group_id, expected_yield_kg? }
+    
+    Use to add missing assignments after plan creation.
+    """
+    data = request.get_json() or {}
+    block_id = data.get('block_id')
+    group_id = data.get('worker_group_id') or None
+    expected_yield = data.get('expected_yield_kg') or 0
+
+    if not block_id:
+        return jsonify({'error': 'block_id required'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Verify plan exists
+            cur.execute("SELECT id FROM labour_plan WHERE id = %s", (plan_id,))
+            if not cur.fetchone():
+                return jsonify({'error': 'Plan not found'}), 404
+
+            # Check block not already in plan
+            cur.execute(
+                "SELECT id FROM block_assignment WHERE labour_plan_id = %s AND block_id = %s",
+                (plan_id, block_id)
+            )
+            if cur.fetchone():
+                return jsonify({'error': 'Block already in this plan'}), 409
+
+            # Add assignment
+            cur.execute("""
+                INSERT INTO block_assignment
+                (labour_plan_id, block_id, worker_group_id, expected_yield_kg,
+                 is_manual_override, override_reason, status, assignment_date)
+                VALUES (%s, %s, %s, %s, TRUE, %s, 'scheduled', CURRENT_DATE)
+            """, (plan_id, block_id, group_id, expected_yield,
+                  'Manual assignment'))
+            
+            conn.commit()
+        return jsonify({'message': 'Assignment added', 'block_id': block_id}), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+# ── Block Assignment Management (Change Groups) ────────────────────────
+
+@labour_bp.route('/assignments/<assignment_id>/change-group', methods=['PUT'])
+@token_required
+@write_required
+def change_group_assignment(assignment_id):
+    """PUT /api/labour/assignments/<id>/change-group — change group assigned to block.
+    
+    Body: { worker_group_id }
+    
+    Allows swapping which group is assigned to a block.
+    """
+    data = request.get_json() or {}
+    new_group_id = data.get('worker_group_id')
+    
+    if not new_group_id:
+        return jsonify({'error': 'worker_group_id required'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Get current assignment
+            cur.execute("""
+                SELECT labour_plan_id, block_id, worker_group_id 
+                FROM block_assignment WHERE id = %s
+            """, (assignment_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'Assignment not found'}), 404
+            
+            plan_id, block_id, old_group_id = row
+            
+            # Change the group
+            cur.execute("""
+                UPDATE block_assignment 
+                SET worker_group_id = %s, 
+                    is_manual_override = TRUE,
+                    override_reason = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (new_group_id, f'Group changed from {old_group_id}', assignment_id))
+            
+            conn.commit()
+        return jsonify({
+            'message': 'Group assignment changed',
+            'assignment_id': assignment_id,
+            'new_group_id': new_group_id
+        }), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/assignments/<assignment_id>/remove', methods=['DELETE'])
+@token_required
+@write_required
+def remove_assignment(assignment_id):
+    """DELETE /api/labour/assignments/<id>/remove — remove block assignment.
+    
+    Unassigns a group from a block.
+    """
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM block_assignment WHERE id = %s", (assignment_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Assignment not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Assignment removed'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/assignments/<assignment_id>/remove-group', methods=['PUT'])
+@token_required
+@write_required
+def remove_group_from_assignment(assignment_id):
+    """PUT /api/labour/assignments/<id>/remove-group — remove group but keep assignment.
+    
+    Unassigns group from block (sets worker_group_id to NULL).
+    Block stays in plan, just unassigned until new group is added.
+    """
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE block_assignment 
+                SET worker_group_id = NULL, 
+                    is_manual_override = TRUE,
+                    override_reason = 'Group removed - awaiting reassignment',
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (assignment_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Assignment not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Group removed from block'}), 200
+    except Exception as e:
+        conn.rollback()
         return _db_err(e)
     finally:
         conn.close()
