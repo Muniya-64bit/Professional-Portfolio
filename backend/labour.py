@@ -660,6 +660,11 @@ def create_employee():
                     INSERT INTO worker_group_member (group_id, employee_id, joined_date, is_active)
                     VALUES (%s, %s, %s, TRUE)
                 """, (group_id, emp_id, data['hire_date']))
+                # If skill_type is 'supervisor', set as supervisor for this group
+                if data.get('skill_type') == 'supervisor':
+                    cur.execute("""
+                        UPDATE worker_group SET supervisor_id = %s WHERE id = %s
+                    """, (emp_id, group_id))
 
             conn.commit()
         return jsonify({'id': emp_id, 'message': 'Employee created'}), 201
@@ -710,6 +715,11 @@ def update_employee(employee_id):
                         ON CONFLICT (group_id, employee_id)
                         DO UPDATE SET is_active = TRUE, left_date = NULL, updated_at = NOW()
                     """, (group_id, employee_id))
+                    # If skill_type is 'supervisor', set as supervisor for this group
+                    if updates.get('skill_type') == 'supervisor':
+                        cur.execute("""
+                            UPDATE worker_group SET supervisor_id = %s WHERE id = %s
+                        """, (employee_id, group_id))
 
             conn.commit()
         return jsonify({'message': 'Employee updated'}), 200
@@ -730,6 +740,12 @@ def delete_employee(employee_id):
         return jsonify({'error': 'Database unavailable'}), 503
     try:
         with conn.cursor() as cur:
+            # If this employee is a supervisor, clear them from their group
+            cur.execute("""
+                UPDATE worker_group SET supervisor_id = NULL
+                WHERE supervisor_id = %s
+            """, (employee_id,))
+
             # Deactivate group membership
             cur.execute("""
                 UPDATE worker_group_member
