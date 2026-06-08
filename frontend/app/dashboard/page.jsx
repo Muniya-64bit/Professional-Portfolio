@@ -2128,6 +2128,7 @@ function ReportTab() {
 /* ── Nav Items Config ─────────────────────────────────────────────────── */
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
+  { id: 'blocks',      icon: '🏘️', label: 'Blocks Management' },
   { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
   { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
@@ -2138,6 +2139,7 @@ const navItems = [
 
 const tabTitles = {
   overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
+  blocks:     { title: 'Blocks Management',  sub: 'View, add, edit and manage all plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
   fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
