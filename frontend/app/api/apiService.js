@@ -273,6 +273,14 @@ export const apiService = {
     return this._labour(token, 'GET', `/rotation${q}`);
   },
 
+  getRotationMembers(token, estateId, round, groupCode) {
+    const q = new URLSearchParams();
+    if (estateId)  q.set('estate_id', estateId);
+    if (round)     q.set('round', round);
+    if (groupCode) q.set('group_code', groupCode);
+    return this._labour(token, 'GET', `/rotation/members?${q}`);
+  },
+
   // Block management
   getBlocks(token, estateId) {
     const q = estateId ? `?estate_id=${estateId}` : '';
