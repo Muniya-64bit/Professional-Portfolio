@@ -35,7 +35,7 @@ export default function Login() {
         <div className={styles.authBrandDecor1} />
         <div className={styles.authBrandDecor2} />
         <div className={styles.authBrandContent}>
-          <div className={styles.authBrandLogo}>🌿</div>
+          <img src="/logo.png" alt="KVPL Logo" className={styles.authBrandLogo} style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
           <h1 className={styles.authBrandTitle}>KVPL System</h1>
           <p className={styles.authBrandSub}>
             Sri Lanka's leading tea plantation resource optimization platform.
@@ -115,10 +115,6 @@ export default function Login() {
             <Link href="/auth/signup" className={styles.authLink}>Create one</Link>
           </div>
 
-          <div className={styles.demoBox}>
-            <div className={styles.demoBoxTitle}>Demo Credentials</div>
-            <div className={styles.demoBoxCredential}>admin@kvpl.com / Admin@123kvpl</div>
-          </div>
         </div>
       </div>
     </div>

@@ -41,7 +41,7 @@ export default function Home() {
         <div className="container">
           <nav className="site-nav">
             <a href="/" className="site-logo">
-              <div className="logo-mark">🌿</div>
+              <img src="/logo.png" alt="KVPL Logo" className="logo-mark" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
               <span>KVPL</span>
             </a>
 

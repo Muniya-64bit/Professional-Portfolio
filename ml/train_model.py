@@ -120,5 +120,5 @@ metrics = {
 with open("models/model_metrics.json", "w") as f:
     json.dump(metrics, f, indent=2)
 
-print(f"\n✅ Model saved: models/yield_model.pkl")
-print(f"✅ Metrics saved: models/model_metrics.json")
+print(f"\n[OK] Model saved: models/yield_model.pkl")
+print(f"[OK] Metrics saved: models/model_metrics.json")

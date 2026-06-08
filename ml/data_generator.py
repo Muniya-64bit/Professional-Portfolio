@@ -106,10 +106,10 @@ def fetch_nasa_weather(estate_name, lat, lon, start_year, end_year):
                 "avg_temp_c":       temp[key],
                 "avg_humidity_pct": humidity[key],
             }
-        print(f"  ✅ {estate_name}: {len(weather)} months fetched")
+        print(f"  [OK] {estate_name}: {len(weather)} months fetched")
         return weather
     except Exception as e:
-        print(f"  ❌ {estate_name} failed: {e}. Using fallback values.")
+        print(f"  [FAIL] {estate_name} failed: {e}. Using fallback values.")
         return None
 
 
@@ -266,7 +266,7 @@ for block in blocks:
 df = pd.DataFrame(rows)
 df.to_csv("data/training_data.csv", index=False)
 
-print(f"\n✅ Generated {len(df)} rows")
+print(f"\n[OK] Generated {len(df)} rows")
 print(f"   Blocks  : {df['block_id'].nunique()}")
 print(f"   Years   : {sorted(df['year'].unique())}")
 print(f"   Columns : {list(df.columns)}")
