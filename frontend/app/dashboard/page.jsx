@@ -509,6 +509,12 @@ function LabourTab() {
   const [yieldSaving, setYieldSaving] = useState(false);
   const [yieldError, setYieldError]   = useState('');
 
+  // Plan creation modal state
+  const [planCreateModal, setPlanCreateModal] = useState(false);
+  const [planCreateBlocks, setPlanCreateBlocks] = useState([]); // [{...block, groupId:'', expectedYield:''}]
+  const [planCreateLoading, setPlanCreateLoading] = useState(false);
+  const [planCreateError, setPlanCreateError] = useState('');
+
   // First day of the current month (YYYY-MM-01)
   const monthStart = (() => {
     const d = new Date();
@@ -535,7 +541,11 @@ function LabourTab() {
     const load = async () => {
       try {
         if (view === 'month') {
-          const plans = await apiService.getLabourPlans(token, { estateId, monthStart });
+          const [plans, grps] = await Promise.all([
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+            apiService.getWorkerGroups(token, estateId),
+          ]);
+          setGroups(grps);
           if (plans.length > 0) {
             const detail = await apiService.getLabourPlan(token, plans[0].id);
             setPlan(detail);
@@ -862,30 +872,25 @@ function LabourTab() {
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
               <p>No labour plan for this month yet.</p>
-              {(canWrite || isManager) && (
-                <button onClick={async () => {
-                  setLoading(true);
-                  try {
-                    const result = await apiService.createManualPlan(token, {
-                      estate_id: estateId,
-                      period_start: monthStart,
-                      assignments: [],
-                      status: 'draft',
-                      notes: 'Manual plan creation'
-                    });
-                    // Reload plan details
-                    const detail = await apiService.getLabourPlan(token, result.plan_id);
-                    setPlan(detail);
-                    setError('');
-                  } catch (e) {
-                    setError(e.message);
-                  } finally {
-                    setLoading(false);
-                  }
-                }} disabled={loading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem', opacity: loading ? 0.7 : 1 }}>
-                  {loading ? 'Creating...' : '+ Create Plan'}
-                </button>
-              )}
+              <button onClick={async () => {
+                setPlanCreateError('');
+                setPlanCreateLoading(true);
+                try {
+                  const [blocks, grps] = await Promise.all([
+                    apiService.getBlocks(token, estateId),
+                    apiService.getWorkerGroups(token, estateId),
+                  ]);
+                  setGroups(grps);
+                  setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                  setPlanCreateModal(true);
+                } catch (e) {
+                  setError(e.message);
+                } finally {
+                  setPlanCreateLoading(false);
+                }
+              }} disabled={loading || planCreateLoading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem' }}>
+                {planCreateLoading ? 'Loading...' : '+ Create Plan'}
+              </button>
             </div>
           ) : (
             <div className="table-wrap">
@@ -896,7 +901,28 @@ function LabourTab() {
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
                 </div>
-                <span className="badge badge-neutral">{assignments.length} blocks</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="badge badge-neutral">{assignments.length} blocks</span>
+                  <button onClick={async () => {
+                    setPlanCreateError('');
+                    setPlanCreateLoading(true);
+                    try {
+                      const [blocks, grps] = await Promise.all([
+                        apiService.getBlocks(token, estateId),
+                        apiService.getWorkerGroups(token, estateId),
+                      ]);
+                      setGroups(grps);
+                      // Only show blocks not already in the plan
+                      const assignedCodes = new Set(assignments.map(a => a.block_code));
+                      const unassigned = blocks.filter(b => !assignedCodes.has(b.block_code));
+                      setPlanCreateBlocks(unassigned.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                      setPlanCreateModal(true);
+                    } catch (e) { setError(e.message); }
+                    finally { setPlanCreateLoading(false); }
+                  }} disabled={planCreateLoading} style={{ padding: '5px 14px', borderRadius: 7, border: '1.5px dashed var(--color-primary)', background: 'transparent', color: 'var(--color-primary)', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    {planCreateLoading ? '…' : '+ Add Blocks'}
+                  </button>
+                </div>
               </div>
               <table>
                 <thead>
@@ -912,6 +938,29 @@ function LabourTab() {
                   </tr>
                 </thead>
                 <tbody>
+                  {sortedAssignments.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                        No block assignments yet.
+                        <button onClick={async () => {
+                          setPlanCreateError('');
+                          setPlanCreateLoading(true);
+                          try {
+                            const [blocks, grps] = await Promise.all([
+                              apiService.getBlocks(token, estateId),
+                              apiService.getWorkerGroups(token, estateId),
+                            ]);
+                            setGroups(grps);
+                            setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                            setPlanCreateModal(true);
+                          } catch (e) { setError(e.message); }
+                          finally { setPlanCreateLoading(false); }
+                        }} style={{ marginLeft: 12, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                          + Add Blocks
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {sortedAssignments.map(a => {
                     const exp = a.expected_yield_kg || 0;
                     const act = a.actual_yield_kg   || 0;
@@ -926,7 +975,7 @@ function LabourTab() {
                       <tr key={a.id}>
                         <td style={{ fontWeight: 700, color: 'var(--color-text)' }}>
                           {a.block_code}
-                          {a.is_manual_override && (
+                          {a.is_manual_override && a.original_group_name && (
                             <span title={a.override_reason || 'Manually overridden'}
                                   style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--color-warning)', fontWeight: 600 }}>
                               ✎
@@ -984,7 +1033,7 @@ function LabourTab() {
                                 >
                                   <option value="">Select group…</option>
                                   {groups
-                                    .filter(g => !assignments.some(ax => ax.worker_group_id === g.id))
+                                    .filter(g => !assignments.some(ax => ax.worker_group_id && String(ax.worker_group_id) === String(g.id)))
                                     .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
                                   }
                                 </select>
@@ -1604,6 +1653,127 @@ function LabourTab() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Plan Creation Modal ── */}
+      {planCreateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 14, padding: 0, width: '90%', maxWidth: 820, maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.35)' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-text)' }}>{plan ? 'Add Blocks to Plan' : 'Create Labour Plan'}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{monthStart} — assign groups and set expected yields for each block</div>
+              </div>
+              <button onClick={() => setPlanCreateModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--color-text-muted)', padding: '4px 8px' }}>✕</button>
+            </div>
+
+            {/* Block table */}
+            <div style={{ overflowY: 'auto', flex: 1, padding: '0 24px' }}>
+              {planCreateBlocks.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)', padding: '32px 0', textAlign: 'center' }}>No blocks found for this estate.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Block</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>State</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Area (ha)</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Worker Group</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Expected Yield (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planCreateBlocks.map((b, idx) => (
+                      <tr key={b.id} style={{ borderBottom: '1px solid var(--color-border)', background: idx % 2 === 0 ? 'transparent' : 'var(--color-surface-2)' }}>
+                        <td style={{ padding: '10px 8px', fontWeight: 700 }}>{b.block_code}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>{b.state || 'active'}</span>
+                        </td>
+                        <td style={{ padding: '10px 8px', color: 'var(--color-text-muted)' }}>{b.area_hectares ?? '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <select
+                            value={b.groupId}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, groupId: e.target.value } : x))}
+                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 140 }}
+                          >
+                            <option value="">— Unassigned —</option>
+                            {groups
+                              .filter(g => !planCreateBlocks.some((x, i) => i !== idx && x.groupId && String(x.groupId) === String(g.id)))
+                              .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                            }
+                          </select>
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={b.expectedYield}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, expectedYield: e.target.value } : x))}
+                            style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem' }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {planCreateError && <div style={{ padding: '8px 24px', color: 'var(--color-danger)', fontSize: '0.8rem' }}>{planCreateError}</div>}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setPlanCreateModal(false)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontWeight: 500 }}>Cancel</button>
+              <button
+                disabled={planCreateLoading || planCreateBlocks.length === 0}
+                onClick={async () => {
+                  setPlanCreateLoading(true);
+                  setPlanCreateError('');
+                  try {
+                    let updatedPlan;
+                    if (plan) {
+                      // Add blocks to existing plan
+                      for (const b of planCreateBlocks) {
+                        await apiService.addAssignmentToPlan(token, plan.id, {
+                          block_id: b.id,
+                          worker_group_id: b.groupId || null,
+                          expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                        });
+                      }
+                      updatedPlan = await apiService.getLabourPlan(token, plan.id);
+                    } else {
+                      // Create new plan with all blocks
+                      const assignmentList = planCreateBlocks.map(b => ({
+                        block_id: b.id,
+                        worker_group_id: b.groupId || null,
+                        expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                      }));
+                      const result = await apiService.createManualPlan(token, {
+                        estate_id: estateId,
+                        period_start: monthStart,
+                        assignments: assignmentList,
+                        status: 'draft',
+                        notes: 'Manual plan creation',
+                      });
+                      updatedPlan = await apiService.getLabourPlan(token, result.plan_id);
+                    }
+                    setPlan(updatedPlan);
+                    setPlanCreateModal(false);
+                    setError('');
+                  } catch (e) {
+                    setPlanCreateError(e.message);
+                  } finally {
+                    setPlanCreateLoading(false);
+                  }
+                }}
+                style={{ padding: '8px 24px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, cursor: planCreateLoading ? 'not-allowed' : 'pointer', opacity: planCreateLoading ? 0.7 : 1 }}
+              >
+                {planCreateLoading ? (plan ? 'Adding…' : 'Creating…') : (plan ? 'Add Blocks' : 'Create Plan')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Record Yield Modal (top-level so it works from any sub-view) ── */}
