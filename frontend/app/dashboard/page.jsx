@@ -716,14 +716,6 @@ function LabourTab() {
     }
   };
 
-  const openYieldEdit = () => {
-    const pre = {};
-    (plan?.assignments || []).forEach(a => {
-      pre[a.id] = a.actual_yield_kg != null ? String(a.actual_yield_kg) : '';
-    });
-    setYieldInputsTable(pre);
-    setEditingYield('table'); // Mark that we're in table edit mode
-  };
 
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
@@ -879,23 +871,7 @@ function LabourTab() {
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span className="badge badge-neutral">{assignments.length} blocks</span>
-                  {(canWrite || isManager) && (
-                    <button
-                      onClick={openYieldEdit}
-                      disabled={editingYield === 'table'}
-                      style={{
-                        padding: '7px 16px', borderRadius: 8, border: 'none', cursor: editingYield === 'table' ? 'default' : 'pointer',
-                        background: editingYield === 'table' ? 'var(--color-success)' : 'var(--color-primary)',
-                        color: '#fff', fontWeight: 600,
-                        fontSize: '0.8125rem', opacity: editingYield === 'table' ? 0.8 : 1
-                      }}
-                    >
-                      {editingYield === 'table' ? '✓ Editing...' : '✏️ Record Yield'}
-                    </button>
-                  )}
-                </div>
+                <span className="badge badge-neutral">{assignments.length} blocks</span>
               </div>
               <table>
                 <thead>
@@ -1010,7 +986,7 @@ function LabourTab() {
                           )}
                         </td>
                         <td style={{ fontWeight: 700 }}>
-                          {editingYield === 'table' ? (
+                          {editingYield === a.id ? (
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                               <input
                                 type="number"
@@ -1020,7 +996,9 @@ function LabourTab() {
                                 onChange={e => setYieldInputsTable(p => ({ ...p, [a.id]: e.target.value }))}
                                 onKeyDown={e => {
                                   if (e.key === 'Enter') handleSaveYieldValue(a.id, yieldInputsTable[a.id]);
+                                  if (e.key === 'Escape') setEditingYield(null);
                                 }}
+                                autoFocus
                                 disabled={savingYield}
                                 style={{
                                   width: '80px', padding: '6px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
@@ -1039,6 +1017,17 @@ function LabourTab() {
                               >
                                 {savingYield ? '⏳' : '✓'}
                               </button>
+                              <button
+                                onClick={() => setEditingYield(null)}
+                                disabled={savingYield}
+                                style={{
+                                  padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)',
+                                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer',
+                                  fontSize: '0.75rem', opacity: savingYield ? 0.6 : 1
+                                }}
+                              >
+                                ✕
+                              </button>
                             </div>
                           ) : (
                             <div
@@ -1047,24 +1036,17 @@ function LabourTab() {
                                 setYieldInputsTable(p => ({ ...p, [a.id]: act || '' }));
                               }}
                               style={{
-                                cursor: editingYield === null ? 'pointer' : 'default',
+                                cursor: 'pointer',
                                 padding: '4px 8px', borderRadius: 4,
                                 background: 'transparent', transition: 'background 0.2s',
-                                display: 'flex', alignItems: 'center', gap: 8,
-                                opacity: editingYield !== null && editingYield !== 'table' ? 0.6 : 1
+                                display: 'flex', alignItems: 'center', gap: 8
                               }}
-                              onMouseEnter={e => {
-                                if (editingYield === null || editingYield === 'table') {
-                                  e.currentTarget.style.background = 'var(--color-surface-2)';
-                                }
-                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface-2)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                              title={editingYield === null ? 'Click to record yield' : ''}
+                              title="Click to record actual yield"
                             >
                               {act ? Math.round(act).toLocaleString() : '—'}
-                              {editingYield === null && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
-                              )}
+                              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
                             </div>
                           )}
                         </td>
