@@ -653,7 +653,9 @@ def create_employee():
                 # Remove from any current group first
                 cur.execute("""
                     UPDATE worker_group_member
-                    SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
+                    SET is_active = FALSE,
+                        left_date = CASE WHEN CURRENT_DATE > joined_date THEN CURRENT_DATE ELSE joined_date + INTERVAL '1 day' END,
+                        updated_at = NOW()
                     WHERE employee_id = %s AND is_active = TRUE
                 """, (emp_id,))
                 cur.execute("""
@@ -704,7 +706,9 @@ def update_employee(employee_id):
                 # Deactivate current membership
                 cur.execute("""
                     UPDATE worker_group_member
-                    SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
+                    SET is_active = FALSE,
+                        left_date = CASE WHEN CURRENT_DATE > joined_date THEN CURRENT_DATE ELSE joined_date + INTERVAL '1 day' END,
+                        updated_at = NOW()
                     WHERE employee_id = %s AND is_active = TRUE
                 """, (employee_id,))
                 # Assign to new group if not empty string
@@ -757,7 +761,9 @@ def delete_employee(employee_id):
             # Deactivate group membership
             cur.execute("""
                 UPDATE worker_group_member
-                SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
+                SET is_active = FALSE,
+                    left_date = CASE WHEN CURRENT_DATE > joined_date THEN CURRENT_DATE ELSE joined_date + INTERVAL '1 day' END,
+                    updated_at = NOW()
                 WHERE employee_id = %s AND is_active = TRUE
             """, (employee_id,))
 
