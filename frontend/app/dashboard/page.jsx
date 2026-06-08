@@ -2129,21 +2129,31 @@ function ReportTab() {
   );
 }
 
-/* ── Tab: Estates Management ──────────────────────────────────── */
-function EstatesTab() {
+/* ── Tab: Estates & Blocks ────────────────────────────────────── */
+function EstateBlocksTab() {
   const { token, canWrite, isManager } = useAuth();
   const [estates, setEstates] = useState([]);
+  const [selectedEstate, setSelectedEstate] = useState(null);
+  const [blocks, setBlocks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [editingEstate, setEditingEstate] = useState(null);
+  const [editingBlock, setEditingBlock] = useState(null);
   const [estateForm, setEstateForm] = useState({ name: '', region: '' });
+  const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
   const [saving, setSaving] = useState(false);
+  const stateOptions = ['preparation', 'planting', 'growing', 'harvesting', 'fallow', 'maintenance', 'active'];
 
   useEffect(() => {
     if (!token) return;
     setLoading(true);
-    apiService.getEstates(token).then(data => setEstates(data || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
+    apiService.getEstates(token).then(data => { setEstates(data || []); if (data.length > 0) setSelectedEstate(data[0]); }).catch(e => setError(e.message)).finally(() => setLoading(false));
   }, [token]);
+
+  useEffect(() => {
+    if (!token || !selectedEstate) return;
+    apiService.getBlocks(token, selectedEstate.id).then(data => setBlocks(data || [])).catch(e => setError(e.message));
+  }, [token, selectedEstate]);
 
   const handleSaveEstate = async () => {
     if (!estateForm.name || !estateForm.region) { setError('Name and region required'); return; }
@@ -2157,85 +2167,19 @@ function EstatesTab() {
       setEditingEstate(null); setEstateForm({ name: '', region: '' });
       const updated = await apiService.getEstates(token);
       setEstates(updated); setError('');
+      if (editingEstate === 'new' && updated.length > 0) setSelectedEstate(updated[updated.length - 1]);
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const handleDeleteEstate = async (estateId) => {
-    if (!confirm('Delete this estate? This will remove all blocks, employees, and plans.')) return;
+    if (!confirm('Delete estate & all blocks/employees/plans?')) return;
     try {
       await apiService.deleteEstate(token, estateId);
       const updated = await apiService.getEstates(token);
       setEstates(updated);
+      if (selectedEstate?.id === estateId) setSelectedEstate(updated[0] || null);
     } catch (e) { setError(e.message); }
   };
-
-  return (
-    <>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)' }}>
-        {(canWrite || isManager) && (
-          <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Estate</button>
-        )}
-      </div>
-
-      {error && <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 'var(--space-4)' }}>{error}</div>}
-
-      {editingEstate && (
-        <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
-          <div className="section-card-header"><div className="section-card-title">{editingEstate === 'new' ? 'Create Estate' : 'Edit Estate'}</div></div>
-          <div className="section-card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
-              <input type="text" placeholder="Estate Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-              <button onClick={handleSaveEstate} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="table-wrap">
-        <div className="table-header-bar"><div><div className="table-title">Plantations</div><div className="table-subtitle">{estates.length} estates</div></div></div>
-        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div> : estates.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No estates</div> : (
-          <table>
-            <thead><tr><th>Name</th><th>Region</th><th>Blocks</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
-            <tbody>{estates.map(e => (
-              <tr key={e.id}><td style={{ fontWeight: 600 }}>{e.name}</td><td>{e.region || '—'}</td><td>{e.block_count || e.total_blocks || 0}</td>
-              {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteEstate(e.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
-      </div>
-    </>
-  );
-}
-
-/* ── Nav Items Config ─────────────────────────────────────────────────── */
-/* ── Tab: Blocks Management ───────────────────────────────────── */
-function BlocksTab() {
-  const { token, canWrite, isManager } = useAuth();
-  const [estates, setEstates] = useState([]);
-  const [estateId, setEstateId] = useState('');
-  const [blocks, setBlocks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [editingBlock, setEditingBlock] = useState(null);
-  const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
-  const [saving, setSaving] = useState(false);
-  const stateOptions = ['preparation', 'planting', 'growing', 'harvesting', 'fallow', 'maintenance', 'active'];
-
-  useEffect(() => {
-    if (!token) return;
-    apiService.getEstates(token).then(data => { setEstates(data); if (data.length > 0) setEstateId(data[0].id); }).catch(() => {});
-  }, [token]);
-
-  useEffect(() => {
-    if (!token || !estateId) return;
-    setLoading(true);
-    apiService.getBlocks(token, estateId).then(data => setBlocks(data || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, [token, estateId]);
 
   const handleSaveBlock = async () => {
     if (!blockForm.block_code) { setError('Block code required'); return; }
@@ -2244,10 +2188,10 @@ function BlocksTab() {
       if (editingBlock && editingBlock !== 'new') {
         await apiService.updateBlock(token, editingBlock.id, blockForm);
       } else {
-        await apiService.createBlock(token, { estate_id: estateId, ...blockForm });
+        await apiService.createBlock(token, { estate_id: selectedEstate.id, ...blockForm });
       }
       setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
-      const updated = await apiService.getBlocks(token, estateId);
+      const updated = await apiService.getBlocks(token, selectedEstate.id);
       setBlocks(updated); setError('');
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -2256,63 +2200,103 @@ function BlocksTab() {
     if (!confirm('Delete block?')) return;
     try {
       await apiService.deleteBlock(token, blockId);
-      const updated = await apiService.getBlocks(token, estateId);
+      const updated = await apiService.getBlocks(token, selectedEstate.id);
       setBlocks(updated);
     } catch (e) { setError(e.message); }
   };
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)' }}>
-        <div><div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5 }}>ESTATE</div>
-          <select value={estateId} onChange={e => setEstateId(e.target.value)} disabled={!canWrite} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', width: '200px' }}>
-            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
-        {(canWrite || isManager) && (
-          <button onClick={() => { setEditingBlock('new'); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' }); }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Block</button>
-        )}
-      </div>
-
       {error && <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 'var(--space-4)' }}>{error}</div>}
 
-      {editingBlock && (
-        <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
-          <div className="section-card-header"><div className="section-card-title">{editingBlock === 'new' ? 'Create Block' : 'Edit Block'}</div></div>
-          <div className="section-card-body">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
-              <input type="text" placeholder="Block Code" value={blockForm.block_code} onChange={e => setBlockForm(p => ({ ...p, block_code: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="text" placeholder="Soil Type" value={blockForm.soil_type} onChange={e => setBlockForm(p => ({ ...p, soil_type: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="text" placeholder="Growth Stage" value={blockForm.growth_stage} onChange={e => setBlockForm(p => ({ ...p, growth_stage: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <input type="number" step="0.01" placeholder="Area (hectares)" value={blockForm.area_hectares} onChange={e => setBlockForm(p => ({ ...p, area_hectares: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-              <select value={blockForm.state} onChange={e => setBlockForm(p => ({ ...p, state: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem', gridColumn: '1 / -1' }}>
-                {stateOptions.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-              <button onClick={handleSaveBlock} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
-            </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-5)' }}>
+        {/* Estates Panel */}
+        <div className="table-wrap">
+          <div className="table-header-bar"><div><div className="table-title">Estates</div><div className="table-subtitle">{estates.length} total</div></div></div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 'var(--space-4)' }}>
+            {(canWrite || isManager) && (
+              <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', width: '100%' }}>+ New Estate</button>
+            )}
+            {editingEstate && (
+              <div style={{ padding: 'var(--space-3)', background: 'var(--color-surface)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
+                <input type="text" placeholder="Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
+                <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Cancel</button>
+                  <button onClick={handleSaveEstate} disabled={saving} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? '...' : 'Save'}</button>
+                </div>
+              </div>
+            )}
+            {loading ? <div style={{ padding: 'var(--space-4)', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Loading…</div> : (
+              estates.map(e => (
+                <div key={e.id} style={{ padding: 'var(--space-3)', borderRadius: 6, border: selectedEstate?.id === e.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', background: selectedEstate?.id === e.id ? 'var(--color-surface-2)' : 'transparent', cursor: 'pointer' }}>
+                  <div onClick={() => setSelectedEstate(e)} style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>{e.name}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 6 }}>{e.region} • {e.block_count || 0} blocks</div>
+                  {(canWrite || isManager) && (
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Edit</button>
+                      <button onClick={() => handleDeleteEstate(e.id)} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Del</button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
-      )}
 
-      <div className="table-wrap">
-        <div className="table-header-bar"><div><div className="table-title">Plantation Blocks</div><div className="table-subtitle">{blocks.length} blocks</div></div></div>
-        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div> : blocks.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No blocks</div> : (
-          <table>
-            <thead><tr><th>Code</th><th>Soil</th><th>Stage</th><th>Area (ha)</th><th>State</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
-            <tbody>{blocks.map(b => (
-              <tr key={b.id}><td style={{ fontWeight: 600 }}>{b.block_code}</td><td>{b.soil_type || '—'}</td><td>{b.growth_stage || '—'}</td><td>{b.area_hectares || '—'}</td><td><span className={`badge badge-${b.state === 'active' ? 'success' : b.state === 'harvesting' ? 'warning' : 'neutral'}`}>{b.state.charAt(0).toUpperCase() + b.state.slice(1)}</span></td>
-              {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingBlock(b); setBlockForm(b); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteBlock(b.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
-              </tr>
-            ))}</tbody>
-          </table>
-        )}
+        {/* Blocks Panel */}
+        <div>
+          {selectedEstate && (
+            <>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 'var(--space-5)' }}>
+                <div><div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>SELECTED</div><div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{selectedEstate.name}</div></div>
+                {(canWrite || isManager) && (
+                  <button onClick={() => { setEditingBlock('new'); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ marginLeft: 'auto', padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Block</button>
+                )}
+              </div>
+
+              {editingBlock && (
+                <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
+                  <div className="section-card-header"><div className="section-card-title">{editingBlock === 'new' ? 'Create Block' : 'Edit Block'}</div></div>
+                  <div className="section-card-body">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
+                      <input type="text" placeholder="Block Code" value={blockForm.block_code} onChange={e => setBlockForm(p => ({ ...p, block_code: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="text" placeholder="Soil Type" value={blockForm.soil_type} onChange={e => setBlockForm(p => ({ ...p, soil_type: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="text" placeholder="Growth Stage" value={blockForm.growth_stage} onChange={e => setBlockForm(p => ({ ...p, growth_stage: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <input type="number" step="0.01" placeholder="Area (hectares)" value={blockForm.area_hectares} onChange={e => setBlockForm(p => ({ ...p, area_hectares: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+                      <select value={blockForm.state} onChange={e => setBlockForm(p => ({ ...p, state: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem', gridColumn: '1 / -1' }}>
+                        {stateOptions.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                      <button onClick={() => { setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+                      <button onClick={handleSaveBlock} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="table-wrap">
+                <div className="table-header-bar"><div><div className="table-title">Blocks</div><div className="table-subtitle">{blocks.length} blocks</div></div></div>
+                {blocks.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No blocks. Create one to get started!</div> : (
+                  <table>
+                    <thead><tr><th>Code</th><th>Soil</th><th>Stage</th><th>Area (ha)</th><th>State</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
+                    <tbody>{blocks.map(b => (
+                      <tr key={b.id}><td style={{ fontWeight: 600 }}>{b.block_code}</td><td>{b.soil_type || '—'}</td><td>{b.growth_stage || '—'}</td><td>{b.area_hectares || '—'}</td><td><span className={`badge badge-${b.state === 'active' ? 'success' : b.state === 'harvesting' ? 'warning' : 'neutral'}`}>{b.state.charAt(0).toUpperCase() + b.state.slice(1)}</span></td>
+                      {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingBlock(b); setBlockForm(b); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteBlock(b.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </>
   );
 }
+
 
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
