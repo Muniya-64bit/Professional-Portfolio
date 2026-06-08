@@ -241,6 +241,24 @@ export const apiService = {
     return this._labour(token, 'GET', `/rotation${q}`);
   },
 
+  // Block management
+  getBlocks(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._labour(token, 'GET', `/blocks${q}`);
+  },
+
+  createBlock(token, data) {
+    return this._labour(token, 'POST', '/blocks', data);
+  },
+
+  updateBlock(token, blockId, data) {
+    return this._labour(token, 'PUT', `/blocks/${blockId}`, data);
+  },
+
+  deleteBlock(token, blockId) {
+    return this._labour(token, 'DELETE', `/blocks/${blockId}`);
+  },
+
   recordPlanYield(token, planId, yields) {
     return this._labour(token, 'POST', `/plans/${planId}/record-yield`, { yields });
   },

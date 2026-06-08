@@ -370,14 +370,18 @@ def get_plan(plan_id):
                        ba.expected_yield_kg, ba.actual_yield_kg,
                        ba.plucking_round_number, ba.status, ba.notes,
                        og.group_name AS original_group_name,
-                       ba.override_reason
+                       ba.override_reason,
+                       COALESCE(yp.predicted_yield_kg, ba.expected_yield_kg) AS predicted_yield_kg
                 FROM block_assignment ba
                 JOIN block b ON b.id = ba.block_id
                 LEFT JOIN worker_group wg ON wg.id = ba.worker_group_id
                 LEFT JOIN worker_group og ON og.id = ba.original_group_id
+                LEFT JOIN yield_prediction yp ON yp.block_id = b.id
+                       AND yp.year = EXTRACT(YEAR FROM %s::DATE)
+                       AND yp.month = EXTRACT(MONTH FROM %s::DATE)
                 WHERE ba.labour_plan_id = %s
                 ORDER BY b.block_code
-            """, (plan_id,))
+            """, (plan['period_start'], plan['period_start'], plan_id))
             plan['assignments'] = _rows(cur)
         return jsonify(plan), 200
     except Exception as e:
@@ -1117,6 +1121,127 @@ def list_estates():
             cur.execute(sql, params)
             return jsonify(_rows(cur)), 200
     except Exception as e:
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+# ── Block Management ──────────────────────────────────────────────────────────
+
+@labour_bp.route('/blocks', methods=['GET'])
+@token_required
+def list_blocks():
+    """GET /api/labour/blocks?estate_id=<id> — list blocks for an estate."""
+    estate_id, err = effective_estate_id(request.args.get('estate_id'))
+    if err:
+        return err
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, estate_id, block_code, soil_type, growth_stage, area_hectares
+                FROM block WHERE estate_id = %s
+                ORDER BY block_code
+            """
+            cur.execute(sql, (estate_id,))
+            return jsonify(_rows(cur)), 200
+    except Exception as e:
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/blocks', methods=['POST'])
+@token_required
+@write_required
+def create_block():
+    """POST /api/labour/blocks — create a new block."""
+    data = request.get_json() or {}
+    required = ('estate_id', 'block_code')
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'error': f'Missing: {", ".join(missing)}'}), 400
+
+    estate_id, err = effective_estate_id(data.get('estate_id'))
+    if err:
+        return err
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO block (estate_id, block_code, soil_type, growth_stage, area_hectares)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                estate_id,
+                data['block_code'],
+                data.get('soil_type'),
+                data.get('growth_stage'),
+                data.get('area_hectares'),
+            ))
+            block_id = str(cur.fetchone()[0])
+            conn.commit()
+        return jsonify({'id': block_id, 'message': 'Block created'}), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/blocks/<block_id>', methods=['PUT'])
+@token_required
+@write_required
+def update_block(block_id):
+    """PUT /api/labour/blocks/<id> — update block details."""
+    data = request.get_json() or {}
+    allowed = {'block_code', 'soil_type', 'growth_stage', 'area_hectares'}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'No valid fields'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sets = ', '.join(f"{k} = %s" for k in updates)
+            params = list(updates.values()) + [block_id]
+            cur.execute(f"UPDATE block SET {sets}, updated_at = NOW() WHERE id = %s", params)
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Block not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Block updated'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/blocks/<block_id>', methods=['DELETE'])
+@token_required
+@write_required
+def delete_block(block_id):
+    """DELETE /api/labour/blocks/<id> — delete a block."""
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM block WHERE id = %s", (block_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Block not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Block deleted'}), 200
+    except Exception as e:
+        conn.rollback()
+        logger.error("Delete block error: %s", str(e), exc_info=True)
         return _db_err(e)
     finally:
         conn.close()
