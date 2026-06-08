@@ -928,8 +928,17 @@ function LabourTab() {
             setPlan(null);
           }
         } else if (view === 'rotation') {
-          const r = await apiService.getRotation(token, estateId);
-          setRotation(r.length > 0 ? r[0] : null);
+          const [rotData, plans] = await Promise.all([
+            apiService.getRotation(token, estateId),
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+          ]);
+          setRotation(rotData.length > 0 ? rotData[0] : null);
+          if (plans.length > 0) {
+            const detail = await apiService.getLabourPlan(token, plans[0].id);
+            setPlan(detail);
+          } else {
+            setPlan(null);
+          }
         } else if (view === 'employees') {
           const [emps, grps] = await Promise.all([
             apiService.getEmployees(token, { estateId }),
@@ -1681,25 +1690,46 @@ function LabourTab() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRotationRows.map(([rn, cells]) => (
-                  <tr key={rn} style={{
-                    background: parseInt(rn) === rotation.current_round
-                      ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
-                  }}>
-                    <td style={{ fontWeight: 700 }}>
-                      Round {rn}
-                      {parseInt(rn) === rotation.current_round && (
-                        <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
-                      )}
-                    </td>
-                    {cells.map(c => (
-                      <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
-                        <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                {sortedRotationRows.map(([rn, cells]) => {
+                  const isCurrent = parseInt(rn) === rotation.current_round;
+                  // For the current round, build actual assignment lookup from plan
+                  const actualByBlock = isCurrent && plan
+                    ? Object.fromEntries((plan.assignments || []).map(a => [a.block_code, a]))
+                    : null;
+                  return (
+                    <tr key={rn} style={{
+                      background: isCurrent ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
+                    }}>
+                      <td style={{ fontWeight: 700 }}>
+                        Round {rn}
+                        {isCurrent && (
+                          <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
+                        )}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      {cells.map(c => {
+                        const actual = actualByBlock?.[c.block_code];
+                        const changed = actual && actual.group_code !== c.group_code;
+                        return (
+                          <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                            {actual ? (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                                  {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
+                                </div>
+                                <div style={{ fontSize: '0.7rem' }}>{actual.group_capacity ?? c.capacity} workers</div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
+                                <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                              </>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -2954,6 +2984,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, loading, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     // Wait until auth has finished restoring/verifying the stored token
@@ -2981,7 +3012,7 @@ export default function DashboardPage() {
   return (
     <div className="dash-layout">
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="dash-sidebar">
+      <aside className={`dash-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="dash-sidebar-logo">
           <img src="/logo.png" alt="KVPL Logo" className="dash-sidebar-logo-mark" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
           <div className="dash-sidebar-brand">
@@ -2997,9 +3028,10 @@ export default function DashboardPage() {
               key={item.id}
               className={`dash-nav-item ${activeTab === item.id ? 'active' : ''}`}
               onClick={() => setActiveTab(item.id)}
+              title={sidebarCollapsed ? item.label : undefined}
             >
               <span className="dash-nav-icon">{item.icon}</span>
-              {item.label}
+              <span className="dash-nav-item-label">{item.label}</span>
               {item.id === 'fertilizer' && (
                 <span className="dash-nav-badge">
                   {fertilizerBlocks.filter(b => b.status === 'overdue').length}
@@ -3009,11 +3041,17 @@ export default function DashboardPage() {
           ))}
         </nav>
 
-        
+        <button
+          className="dash-sidebar-toggle"
+          onClick={() => setSidebarCollapsed(c => !c)}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed ? '›' : '‹'}
+        </button>
       </aside>
 
       {/* ── Main Area ────────────────────────────────────────── */}
-      <div className="dash-main">
+      <div className={`dash-main${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         {/* Top Bar */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">

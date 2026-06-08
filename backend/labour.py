@@ -721,8 +721,6 @@ def update_employee(employee_id):
                     cur.execute("""
                         INSERT INTO worker_group_member (group_id, employee_id, joined_date, is_active)
                         VALUES (%s, %s, CURRENT_DATE, TRUE)
-                        ON CONFLICT (group_id, employee_id)
-                        DO UPDATE SET is_active = TRUE, left_date = NULL, updated_at = NOW()
                     """, (group_id, employee_id))
                     # If skill_type is 'supervisor', set as supervisor for this group
                     if updates.get('skill_type') == 'supervisor':
