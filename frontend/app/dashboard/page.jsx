@@ -861,6 +861,30 @@ function LabourTab() {
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
               <p>No labour plan for this month yet.</p>
+              {(canWrite || isManager) && (
+                <button onClick={async () => {
+                  setLoading(true);
+                  try {
+                    const result = await apiService.createManualPlan(token, {
+                      estate_id: estateId,
+                      period_start: monthStart,
+                      assignments: [],
+                      status: 'draft',
+                      notes: 'Manual plan creation'
+                    });
+                    // Reload plan details
+                    const detail = await apiService.getLabourPlan(token, result.plan_id);
+                    setPlan(detail);
+                    setError('');
+                  } catch (e) {
+                    setError(e.message);
+                  } finally {
+                    setLoading(false);
+                  }
+                }} disabled={loading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem', opacity: loading ? 0.7 : 1 }}>
+                  {loading ? 'Creating...' : '+ Create Plan'}
+                </button>
+              )}
             </div>
           ) : (
             <div className="table-wrap">
