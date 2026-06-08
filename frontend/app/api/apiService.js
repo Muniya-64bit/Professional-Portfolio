@@ -231,6 +231,10 @@ export const apiService = {
     return this._labour(token, 'DELETE', `/assignments/${assignmentId}/remove`);
   },
 
+  removeGroupFromAssignment(token, assignmentId) {
+    return this._labour(token, 'PUT', `/assignments/${assignmentId}/remove-group`);
+  },
+
   addEmployeeOverride(token, assignmentId, data) {
     return this._labour(token, 'POST', `/assignments/${assignmentId}/employee-overrides`, data);
   },

@@ -933,19 +933,49 @@ function LabourTab() {
                           )}
                         </td>
                         <td style={{ fontSize: '0.875rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name || '—'}</div>
-                            {(canWrite || isManager) && (
+                          {a.group_name ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name}</div>
+                              {(canWrite || isManager) && (
+                                <select
+                                  onChange={async (e) => {
+                                    if (!e.target.value) return;
+                                    setSavingTarget(true);
+                                    try {
+                                      if (e.target.value === '__remove__') {
+                                        await apiService.removeGroupFromAssignment(token, a.id);
+                                      } else {
+                                        await apiService.changeGroupAssignment(token, a.id, e.target.value);
+                                      }
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setError('');
+                                    } catch (err) {
+                                      setError(err.message);
+                                    } finally {
+                                      setSavingTarget(false);
+                                    }
+                                  }}
+                                  defaultValue=""
+                                  disabled={savingTarget}
+                                  style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.75rem', cursor: 'pointer', opacity: savingTarget ? 0.6 : 1 }}
+                                >
+                                  <option value="">Change...</option>
+                                  {groups.map(g => (
+                                    <option key={g.id} value={g.id}>→ {g.group_name}</option>
+                                  ))}
+                                  <option value="__remove__">Remove Group</option>
+                                </select>
+                              )}
+                            </div>
+                          ) : (
+                            (canWrite || isManager) && (
                               <select
                                 onChange={async (e) => {
                                   if (!e.target.value) return;
                                   setSavingTarget(true);
                                   try {
-                                    if (e.target.value === '__remove__') {
-                                      await apiService.removeAssignment(token, a.id);
-                                    } else {
-                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
-                                    }
+                                    await apiService.changeGroupAssignment(token, a.id, e.target.value);
                                     const updated = await apiService.getLabourPlan(token, plan.id);
                                     setPlan(updated);
                                     setError('');
@@ -957,18 +987,17 @@ function LabourTab() {
                                 }}
                                 defaultValue=""
                                 disabled={savingTarget}
-                                style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.75rem', cursor: 'pointer', opacity: savingTarget ? 0.6 : 1 }}
+                                style={{ padding: '3px 6px', borderRadius: 4, border: '2px solid var(--color-warning)', background: 'var(--color-surface)', color: 'var(--color-warning)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', opacity: savingTarget ? 0.6 : 1 }}
                               >
-                                <option value="">Change...</option>
+                                <option value="">+ Add Group</option>
                                 {groups.map(g => (
-                                  <option key={g.id} value={g.id}>→ {g.group_name}</option>
+                                  <option key={g.id} value={g.id}>{g.group_name}</option>
                                 ))}
-                                <option value="__remove__">Remove</option>
                               </select>
-                            )}
-                          </div>
+                            )
+                          )}
                           {a.is_manual_override && a.original_group_name && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
                               was: {a.original_group_name}
                             </div>
                           )}

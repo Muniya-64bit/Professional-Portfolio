@@ -1552,3 +1552,36 @@ def remove_assignment(assignment_id):
         return _db_err(e)
     finally:
         conn.close()
+
+
+@labour_bp.route('/assignments/<assignment_id>/remove-group', methods=['PUT'])
+@token_required
+@write_required
+def remove_group_from_assignment(assignment_id):
+    """PUT /api/labour/assignments/<id>/remove-group — remove group but keep assignment.
+    
+    Unassigns group from block (sets worker_group_id to NULL).
+    Block stays in plan, just unassigned until new group is added.
+    """
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE block_assignment 
+                SET worker_group_id = NULL, 
+                    is_manual_override = TRUE,
+                    override_reason = 'Group removed - awaiting reassignment',
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (assignment_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Assignment not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Group removed from block'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
