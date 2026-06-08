@@ -740,10 +740,18 @@ def delete_employee(employee_id):
         return jsonify({'error': 'Database unavailable'}), 503
     try:
         with conn.cursor() as cur:
-            # If this employee is a supervisor, clear them from their group
+            # Soft delete the employee
+            cur.execute("""
+                UPDATE employee SET is_active = FALSE, updated_at = NOW()
+                WHERE id = %s AND is_active = TRUE
+            """, (employee_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Employee not found'}), 404
+
+            # Clear supervisor assignment for this employee's group if they were a supervisor
             cur.execute("""
                 UPDATE worker_group SET supervisor_id = NULL
-                WHERE supervisor_id = %s
+                WHERE supervisor_id = %s AND supervisor_id IS NOT NULL
             """, (employee_id,))
 
             # Deactivate group membership
@@ -752,16 +760,11 @@ def delete_employee(employee_id):
                 SET is_active = FALSE, left_date = CURRENT_DATE, updated_at = NOW()
                 WHERE employee_id = %s AND is_active = TRUE
             """, (employee_id,))
-            # Soft delete the employee
-            cur.execute("""
-                UPDATE employee SET is_active = FALSE, updated_at = NOW()
-                WHERE id = %s AND is_active = TRUE
-            """, (employee_id,))
-            if cur.rowcount == 0:
-                return jsonify({'error': 'Employee not found'}), 404
+
             conn.commit()
         return jsonify({'message': 'Employee deactivated'}), 200
     except Exception as e:
+        logger.error("Delete employee error: %s", str(e), exc_info=True)
         conn.rollback()
         return _db_err(e)
     finally:
