@@ -1246,3 +1246,89 @@ def delete_block(block_id):
         return _db_err(e)
     finally:
         conn.close()
+
+
+# ── Estate Management ──────────────────────────────────────────────
+
+@labour_bp.route('/estates', methods=['POST'])
+@token_required
+@write_required
+def create_estate():
+    """POST /api/labour/estates — create a new estate."""
+    data = request.get_json() or {}
+    required = ('name', 'region')
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({'error': f'Missing: {", ".join(missing)}'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO estate (name, region, total_blocks)
+                VALUES (%s, %s, 0)
+                RETURNING id, name, region
+            """, (data['name'], data['region']))
+            row = cur.fetchone()
+            conn.commit()
+        return jsonify({'id': str(row[0]), 'name': row[1], 'region': row[2], 'message': 'Estate created'}), 201
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/estates/<estate_id>', methods=['PUT'])
+@token_required
+@write_required
+def update_estate(estate_id):
+    """PUT /api/labour/estates/<id> — update estate details."""
+    data = request.get_json() or {}
+    allowed = {'name', 'region'}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({'error': 'No valid fields'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sets = ', '.join(f"{k} = %s" for k in updates)
+            params = list(updates.values()) + [estate_id]
+            cur.execute(f"UPDATE estate SET {sets} WHERE id = %s", params)
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Estate not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Estate updated'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/estates/<estate_id>', methods=['DELETE'])
+@token_required
+@write_required
+def delete_estate(estate_id):
+    """DELETE /api/labour/estates/<id> — delete an estate."""
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM estate WHERE id = %s", (estate_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Estate not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Estate deleted'}), 200
+    except Exception as e:
+        conn.rollback()
+        logger.error("Delete estate error: %s", str(e), exc_info=True)
+        return _db_err(e)
+    finally:
+        conn.close()

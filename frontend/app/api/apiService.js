@@ -164,6 +164,18 @@ export const apiService = {
     return this._labour(token, 'GET', '/estates');
   },
 
+  createEstate(token, data) {
+    return this._labour(token, 'POST', '/estates', data);
+  },
+
+  updateEstate(token, estateId, data) {
+    return this._labour(token, 'PUT', `/estates/${estateId}`, data);
+  },
+
+  deleteEstate(token, estateId) {
+    return this._labour(token, 'DELETE', `/estates/${estateId}`);
+  },
+
   getLabourPlans(token, { estateId, monthStart } = {}) {
     const q = new URLSearchParams();
     if (estateId)   q.set('estate_id',    estateId);
