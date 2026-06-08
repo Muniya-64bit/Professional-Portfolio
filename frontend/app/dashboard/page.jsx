@@ -478,6 +478,7 @@ function LabourTab() {
   const [rotSort, setRotSort]         = useState({ field: 'round', dir: 'asc' });
 
   // Target editing state
+  const [addingGroup, setAddingGroup] = useState(null);   // assignment id showing add-group dropdown
   const [editingTarget, setEditingTarget] = useState(null); // assignment id being edited
   const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
   const [savingTarget, setSavingTarget]   = useState(false);
@@ -934,72 +935,66 @@ function LabourTab() {
                         </td>
                         <td style={{ fontSize: '0.875rem' }}>
                           {a.group_name ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name}</div>
+                              {a.is_manual_override && a.original_group_name && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                  (was: {a.original_group_name})
+                                </div>
+                              )}
                               {(canWrite || isManager) && (
+                                <button
+                                  onClick={async () => {
+                                    setSavingTarget(true);
+                                    try {
+                                      await apiService.removeGroupFromAssignment(token, a.id);
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setError('');
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
+                                  }}
+                                  disabled={savingTarget}
+                                  style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.4)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                          ) : (canWrite || isManager) && (
+                            addingGroup === a.id ? (
+                              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                                 <select
+                                  autoFocus
+                                  defaultValue=""
+                                  disabled={savingTarget}
                                   onChange={async (e) => {
                                     if (!e.target.value) return;
                                     setSavingTarget(true);
                                     try {
-                                      if (e.target.value === '__remove__') {
-                                        await apiService.removeGroupFromAssignment(token, a.id);
-                                      } else {
-                                        await apiService.changeGroupAssignment(token, a.id, e.target.value);
-                                      }
+                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
                                       const updated = await apiService.getLabourPlan(token, plan.id);
                                       setPlan(updated);
+                                      setAddingGroup(null);
                                       setError('');
-                                    } catch (err) {
-                                      setError(err.message);
-                                    } finally {
-                                      setSavingTarget(false);
-                                    }
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
                                   }}
-                                  defaultValue=""
-                                  disabled={savingTarget}
-                                  style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.75rem', cursor: 'pointer', opacity: savingTarget ? 0.6 : 1 }}
+                                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-primary)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 120 }}
                                 >
-                                  <option value="">Change...</option>
-                                  {groups.map(g => (
-                                    <option key={g.id} value={g.id}>→ {g.group_name}</option>
-                                  ))}
-                                  <option value="__remove__">Remove Group</option>
+                                  <option value="">Select group…</option>
+                                  {groups.map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)}
                                 </select>
-                              )}
-                            </div>
-                          ) : (
-                            (canWrite || isManager) && (
-                              <select
-                                onChange={async (e) => {
-                                  if (!e.target.value) return;
-                                  setSavingTarget(true);
-                                  try {
-                                    await apiService.changeGroupAssignment(token, a.id, e.target.value);
-                                    const updated = await apiService.getLabourPlan(token, plan.id);
-                                    setPlan(updated);
-                                    setError('');
-                                  } catch (err) {
-                                    setError(err.message);
-                                  } finally {
-                                    setSavingTarget(false);
-                                  }
-                                }}
-                                defaultValue=""
-                                disabled={savingTarget}
-                                style={{ padding: '3px 6px', borderRadius: 4, border: '2px solid var(--color-warning)', background: 'var(--color-surface)', color: 'var(--color-warning)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', opacity: savingTarget ? 0.6 : 1 }}
+                                <button onClick={() => setAddingGroup(null)} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setAddingGroup(a.id)}
+                                style={{ padding: '4px 12px', borderRadius: 6, border: '1.5px dashed var(--color-warning)', background: 'transparent', color: 'var(--color-warning)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
                               >
-                                <option value="">+ Add Group</option>
-                                {groups.map(g => (
-                                  <option key={g.id} value={g.id}>{g.group_name}</option>
-                                ))}
-                              </select>
+                                + Add Group
+                              </button>
                             )
-                          )}
-                          {a.is_manual_override && a.original_group_name && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                              was: {a.original_group_name}
-                            </div>
                           )}
                         </td>
                         <td>
