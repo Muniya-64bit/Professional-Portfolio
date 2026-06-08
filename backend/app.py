@@ -15,7 +15,7 @@ from labour import labour_bp
 from water import water_bp
 from reports import reports_bp
 from roi import roi_bp
-from scheduler import start_scheduler
+from scheduler import maybe_start_scheduler
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +34,11 @@ app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
 app.register_blueprint(reports_bp)
 app.register_blueprint(roi_bp)
+
+# Start the monthly labour scheduler at import time so it runs under wsgi/gunicorn
+# too (not only `python app.py`). Gating inside ensures exactly one process owns
+# it — see scheduler.maybe_start_scheduler / _scheduler_enabled.
+maybe_start_scheduler()
 
 # Basic routes
 @app.route("/", methods=["GET"])
@@ -165,9 +170,7 @@ def logout():
     }), 200
 
 if __name__ == "__main__":
-    # Under the debug reloader the parent process has WERKZEUG_RUN_MAIN unset and
-    # only watches files; the worker sets it to 'true'. Start the scheduler only
-    # in the worker so the monthly job isn't registered twice.
-    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        start_scheduler()
+    # The scheduler is started at import time by maybe_start_scheduler() above.
+    # Under the debug reloader only the worker (WERKZEUG_RUN_MAIN == 'true')
+    # enables it, so the monthly job is never registered twice.
     app.run(host="0.0.0.0", port=5000, debug=True)

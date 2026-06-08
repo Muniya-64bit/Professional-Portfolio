@@ -1114,7 +1114,7 @@ function LabourTab() {
 
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
-  const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
+  const totalWorkers  = assignments.reduce((s, a) => s + (a.allocated_workers ?? a.group_capacity ?? 0), 0);
   const totalTarget   = assignments.reduce((s, a) => s + (a.expected_yield_kg || 0), 0);
   const totalActual   = assignments.reduce((s, a) => s + (a.actual_yield_kg || 0), 0);
   const overallEff    = totalTarget > 0 ? ((totalActual / totalTarget) * 100).toFixed(1) : '—';
@@ -1313,7 +1313,7 @@ function LabourTab() {
                   <tr>
                     <SortHeader label="Block" field="block_code" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Group" field="group_name" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Workers" field="group_capacity" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Workers" field="allocated_workers" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Predicted (kg)" field="predicted_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Target (kg)" field="expected_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
@@ -1436,7 +1436,7 @@ function LabourTab() {
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span>👤</span>
-                            <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
+                            <span style={{ fontWeight: 600 }}>{a.allocated_workers != null ? a.allocated_workers : (a.group_capacity || '—')}</span>
                           </div>
                         </td>
                         <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
@@ -1658,16 +1658,16 @@ function LabourTab() {
               <div>
                 <div className="table-title">{rotation.cycle_name}</div>
                 <div className="table-subtitle">
-                  {rotation.total_rounds}-round cycle · currently on Round {rotation.current_round}
+                  {rotation.total_rounds}-round cycle · {rotation.rounds_executed ?? rotation.total_rounds} rounds executed
                 </div>
               </div>
               <span className="badge badge-neutral">{rotation.total_rounds} rounds</span>
             </div>
 
-            {/* Progress indicator */}
+            {/* Progress indicator — shows only executed rounds */}
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                {Array.from({ length: rotation.total_rounds }, (_, i) => i + 1).map(rn => (
+                {Array.from({ length: rotation.rounds_executed ?? rotation.total_rounds }, (_, i) => i + 1).map(rn => (
                   <div key={rn} style={{
                     flex: 1, height: 8, borderRadius: 4,
                     background: rn < rotation.current_round  ? 'var(--color-success)'
@@ -1678,7 +1678,7 @@ function LabourTab() {
                 ))}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                Round {rotation.current_round} of {rotation.total_rounds} — {Math.round((rotation.current_round / rotation.total_rounds) * 100)}% through cycle
+                {rotation.rounds_executed ?? rotation.total_rounds} of {rotation.total_rounds} rounds completed — {Math.round(((rotation.rounds_executed ?? rotation.total_rounds) / rotation.total_rounds) * 100)}% through cycle
               </div>
             </div>
 
@@ -1716,7 +1716,7 @@ function LabourTab() {
                                 <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
                                   {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
                                 </div>
-                                <div style={{ fontSize: '0.7rem' }}>{actual.group_capacity ?? c.capacity} workers</div>
+                                <div style={{ fontSize: '0.7rem' }}>{actual.allocated_workers ?? actual.group_capacity ?? c.capacity} workers</div>
                               </>
                             ) : (
                               <>

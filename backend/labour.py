@@ -55,6 +55,53 @@ def _next_month(d):
 
 # ── Monthly plan generation (shared by manual create + cron) ──────────────────
 
+def _proportional_workers(block_ids, predictions, total_employees,
+                          supervisor_per_block=None):
+    """Distribute total_employees across blocks proportional to yield predictions.
+
+    supervisor_per_block: {block_id_str: int} — supervisors anchored to that
+    block's primary group.  They are NOT redistributed; only the remaining
+    (non-supervisor + ungrouped) workers are spread proportionally.
+
+    Uses the largest-remainder method so every result is a non-negative integer
+    and values sum exactly to total_employees (no worker is left unallocated).
+    Blocks with zero or missing predictions receive an equal share of the
+    movable pool.
+    """
+    if not block_ids:
+        return {}
+
+    if supervisor_per_block is None:
+        supervisor_per_block = {}
+
+    block_strs = [str(b) for b in block_ids]
+    n = len(block_strs)
+
+    # Supervisors are fixed to their block — remove them from the movable pool
+    fixed  = {bid: supervisor_per_block.get(bid, 0) for bid in block_strs}
+    movable = max(0, total_employees - sum(fixed.values()))
+
+    yields = {bid: max(predictions.get(bid, 0) or 0, 0) for bid in block_strs}
+    total_yield = sum(yields.values())
+
+    if movable == 0:
+        return {bid: fixed[bid] for bid in block_strs}
+
+    if total_yield == 0:
+        # No predictions — distribute movable pool equally
+        base, extra = divmod(movable, n)
+        prop = {bid: base + (1 if i < extra else 0) for i, bid in enumerate(block_strs)}
+    else:
+        raw     = {bid: movable * (yields[bid] / total_yield) for bid in block_strs}
+        prop    = {bid: int(s) for bid, s in raw.items()}
+        deficit = movable - sum(prop.values())
+        by_rem  = sorted(block_strs, key=lambda bid: raw[bid] - prop[bid], reverse=True)
+        for i in range(int(deficit)):
+            prop[by_rem[i % n]] += 1
+
+    return {bid: fixed[bid] + prop[bid] for bid in block_strs}
+
+
 def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
                           status='published', notes=None):
     """Create one estate's monthly labour plan and return a summary dict.
@@ -106,38 +153,76 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
     )
     round_rows = cur.fetchall()
 
-    # All active groups + capacities (for coverage + headcount)
+    # All active group IDs (for full-coverage pass)
     cur.execute(
-        "SELECT id, capacity FROM worker_group WHERE estate_id = %s AND is_active = TRUE",
+        "SELECT id FROM worker_group WHERE estate_id = %s AND is_active = TRUE",
         (estate_id,),
     )
-    group_capacity = {str(gid): cap for gid, cap in cur.fetchall()}
+    all_group_ids = {str(row[0]) for row in cur.fetchall()}
 
-    # assignment tuples: (block_id, group_id, expected_yield, note)
+    # 5. Total active employees in this estate — grouped AND ungrouped.
+    #    Every one of them must be accounted for in this plan.
+    cur.execute(
+        "SELECT COUNT(*) FROM employee WHERE estate_id = %s AND is_active = TRUE",
+        (estate_id,),
+    )
+    total_employees = cur.fetchone()[0] or 1
+
+    # assignment tuples: (block_id, group_id, expected_yield, note, is_primary)
+    # is_primary=True  → rotation-assigned group; carries the block's worker quota
+    # is_primary=False → doubled-up group for full coverage; allocated_workers = 0
     assignments = []
     assigned_groups = set()
     round_block_ids = []
+
     for block_id, group_id in round_rows:
         assignments.append((block_id, group_id,
-                            predictions.get(str(block_id)), None))
+                            predictions.get(str(block_id)), None, True))
         assigned_groups.add(str(group_id))
         round_block_ids.append(block_id)
 
-    # 5. Full-coverage pass — every active group must have a workspace.
-    #    Leftover groups double up on the highest-predicted block this round.
+    # 6. Full-coverage pass — leftover groups double up on the highest-predicted block.
     target_block = None
     if round_block_ids:
         target_block = max(round_block_ids,
                            key=lambda b: predictions.get(str(b), 0) or 0)
-    leftover = [g for g in group_capacity if g not in assigned_groups]
+    leftover = [g for g in all_group_ids if g not in assigned_groups]
     for group_id in leftover:
         if target_block is None:
             break
         assignments.append((target_block, group_id, None,
-                            'auto-assigned for full coverage'))
+                            'auto-assigned for full coverage', False))
         assigned_groups.add(group_id)
 
-    # Ungrouped active employees can't be auto-placed — report them.
+    # 7a. Supervisor anchoring — supervisors stay with their primary group's block.
+    #     Query how many active supervisors belong to each primary-assignment group.
+    supervisor_per_block = {}
+    if round_rows:
+        cur.execute(
+            """SELECT rrb.block_id, COUNT(e.id)
+               FROM rotation_round_block rrb
+               JOIN worker_group_member wgm
+                   ON wgm.group_id = rrb.worker_group_id AND wgm.is_active = TRUE
+               JOIN employee e
+                   ON e.id = wgm.employee_id
+                  AND e.skill_type = 'supervisor'
+                  AND e.is_active  = TRUE
+               WHERE rrb.rotation_cycle_id = %s AND rrb.round_number = %s
+               GROUP BY rrb.block_id""",
+            (cycle_id, current_round),
+        )
+        supervisor_per_block = {str(row[0]): row[1] for row in cur.fetchall()}
+
+    # 7b. Yield-proportional distribution of the non-supervisor pool.
+    #     Supervisors are anchored; everyone else is distributed proportionally.
+    #     All total_employees end up allocated — no one is left behind.
+    block_worker_alloc = _proportional_workers(
+        round_block_ids, predictions, total_employees,
+        supervisor_per_block=supervisor_per_block,
+    )
+
+    # Count ungrouped employees (informational — included in total_employees
+    # and therefore covered by the proportional allocation above).
     cur.execute(
         """SELECT COUNT(*) FROM employee e
            WHERE e.estate_id = %s AND e.is_active = TRUE
@@ -148,33 +233,35 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
     )
     ungrouped = cur.fetchone()[0]
 
-    # 6. Plan totals
+    # 8. Plan totals
     target_kg = round(sum((predictions.get(str(b)) or 0) for b in round_block_ids), 3)
-    total_workers = sum(group_capacity.get(g, 0) for g in assigned_groups) or 1
 
     cur.execute(
         """INSERT INTO labour_plan
                (estate_id, created_by, period_start, total_workers, target_kg, status, notes)
            VALUES (%s, %s, %s, %s, %s, %s, %s)
            RETURNING id""",
-        (estate_id, created_by, period_start, total_workers, target_kg, status,
+        (estate_id, created_by, period_start, total_employees, target_kg, status,
          notes or f'Auto-generated monthly plan — round {current_round}'),
     )
     plan_id = cur.fetchone()[0]
 
-    # 7. Block assignments
-    for block_id, group_id, expected, note in assignments:
+    # 9. Block assignments — primary rows carry the yield-proportional headcount;
+    #    doubled-up rows carry 0 (they provide group coverage, not extra workers).
+    for block_id, group_id, expected, note, is_primary in assignments:
+        alloc = block_worker_alloc.get(str(block_id), 0) if is_primary else 0
         cur.execute(
             """INSERT INTO block_assignment
                    (labour_plan_id, block_id, worker_group_id, assignment_date,
-                    rotation_cycle_id, rotation_round, expected_yield_kg, status, notes)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, 'scheduled', %s)
+                    rotation_cycle_id, rotation_round, expected_yield_kg,
+                    allocated_workers, status, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'scheduled', %s)
                ON CONFLICT (block_id, assignment_date, worker_group_id) DO NOTHING""",
             (plan_id, block_id, group_id, period_start,
-             cycle_id, current_round, expected, note),
+             cycle_id, current_round, expected, alloc, note),
         )
 
-    # 8. Link this month's predictions to the plan
+    # 10. Link this month's predictions to the plan
     cur.execute(
         """UPDATE yield_prediction SET labour_plan_id = %s
            WHERE year = %s AND month = %s
@@ -182,7 +269,7 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
         (plan_id, year, month, estate_id),
     )
 
-    # 9. Advance the rotation round for next month (wraps at total_rounds)
+    # 11. Advance the rotation round for next month (wraps at total_rounds)
     cur.execute(
         """UPDATE rotation_cycle
            SET current_round = (current_round %% total_rounds) + 1, updated_at = NOW()
@@ -191,16 +278,18 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
     )
 
     return {
-        'estate_id':         str(estate_id),
-        'created':           True,
-        'plan_id':           str(plan_id),
-        'period_start':      period_start.isoformat(),
-        'rotation_round':    current_round,
-        'predicted_total_kg': target_kg,
-        'total_workers':     total_workers,
-        'groups_covered':    len(assigned_groups),
-        'groups_doubled_up': len(leftover),
-        'ungrouped_employees': ungrouped,
+        'estate_id':            str(estate_id),
+        'created':              True,
+        'plan_id':              str(plan_id),
+        'period_start':         period_start.isoformat(),
+        'rotation_round':       current_round,
+        'predicted_total_kg':   target_kg,
+        'total_workers':        total_employees,
+        'groups_covered':       len(assigned_groups),
+        'groups_doubled_up':    len(leftover),
+        'ungrouped_employees':  ungrouped,
+        'worker_distribution':  {str(k): v for k, v in block_worker_alloc.items()},
+        'supervisors_anchored': {str(k): v for k, v in supervisor_per_block.items()},
     }
 
 
@@ -367,6 +456,7 @@ def get_plan(plan_id):
                 SELECT ba.id, ba.block_id, b.block_code, b.worker_capacity,
                        wg.id AS worker_group_id,
                        wg.group_name, wg.group_code, wg.capacity AS group_capacity,
+                       ba.allocated_workers,
                        ba.assignment_date, ba.rotation_round, ba.is_manual_override,
                        ba.expected_yield_kg, ba.actual_yield_kg,
                        ba.plucking_round_number, ba.status, ba.notes,
@@ -902,8 +992,14 @@ def get_rotation():
                     JOIN block b        ON b.id  = rrb.block_id
                     JOIN worker_group wg ON wg.id = rrb.worker_group_id
                     WHERE rrb.rotation_cycle_id = %s
+                      AND rrb.round_number IN (
+                          SELECT DISTINCT rotation_round
+                          FROM block_assignment
+                          WHERE rotation_cycle_id = %s
+                            AND rotation_round IS NOT NULL
+                      )
                     ORDER BY rrb.round_number, b.block_code
-                """, (cycle['id'],))
+                """, (cycle['id'], cycle['id']))
                 matrix = {}
                 for row in cur.fetchall():
                     d = _row_dict(cur, row)
@@ -915,6 +1011,7 @@ def get_rotation():
                         'capacity':    d['capacity'],
                     })
                 cycle['matrix'] = matrix
+                cycle['rounds_executed'] = len(matrix)
         return jsonify(cycles), 200
     except Exception as e:
         return _db_err(e)
