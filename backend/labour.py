@@ -1470,3 +1470,85 @@ def add_assignment_to_plan(plan_id):
         return _db_err(e)
     finally:
         conn.close()
+
+
+# ── Block Assignment Management (Change Groups) ────────────────────────
+
+@labour_bp.route('/assignments/<assignment_id>/change-group', methods=['PUT'])
+@token_required
+@write_required
+def change_group_assignment(assignment_id):
+    """PUT /api/labour/assignments/<id>/change-group — change group assigned to block.
+    
+    Body: { worker_group_id }
+    
+    Allows swapping which group is assigned to a block.
+    """
+    data = request.get_json() or {}
+    new_group_id = data.get('worker_group_id')
+    
+    if not new_group_id:
+        return jsonify({'error': 'worker_group_id required'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            # Get current assignment
+            cur.execute("""
+                SELECT labour_plan_id, block_id, worker_group_id 
+                FROM block_assignment WHERE id = %s
+            """, (assignment_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'Assignment not found'}), 404
+            
+            plan_id, block_id, old_group_id = row
+            
+            # Change the group
+            cur.execute("""
+                UPDATE block_assignment 
+                SET worker_group_id = %s, 
+                    is_manual_override = TRUE,
+                    override_reason = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (new_group_id, f'Group changed from {old_group_id}', assignment_id))
+            
+            conn.commit()
+        return jsonify({
+            'message': 'Group assignment changed',
+            'assignment_id': assignment_id,
+            'new_group_id': new_group_id
+        }), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/assignments/<assignment_id>/remove', methods=['DELETE'])
+@token_required
+@write_required
+def remove_assignment(assignment_id):
+    """DELETE /api/labour/assignments/<id>/remove — remove block assignment.
+    
+    Unassigns a group from a block.
+    """
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM block_assignment WHERE id = %s", (assignment_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Assignment not found'}), 404
+            conn.commit()
+        return jsonify({'message': 'Assignment removed'}), 200
+    except Exception as e:
+        conn.rollback()
+        return _db_err(e)
+    finally:
+        conn.close()
