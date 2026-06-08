@@ -377,8 +377,8 @@ def get_plan(plan_id):
                 LEFT JOIN worker_group wg ON wg.id = ba.worker_group_id
                 LEFT JOIN worker_group og ON og.id = ba.original_group_id
                 LEFT JOIN yield_prediction yp ON yp.block_id = b.id
-                       AND EXTRACT(YEAR FROM yp.month_year) = EXTRACT(YEAR FROM %s::DATE)
-                       AND EXTRACT(MONTH FROM yp.month_year) = EXTRACT(MONTH FROM %s::DATE)
+                       AND yp.year = EXTRACT(YEAR FROM %s::DATE)
+                       AND yp.month = EXTRACT(MONTH FROM %s::DATE)
                 WHERE ba.labour_plan_id = %s
                 ORDER BY b.block_code
             """, (plan['period_start'], plan['period_start'], plan_id))
