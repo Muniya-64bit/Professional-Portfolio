@@ -1141,7 +1141,7 @@ def list_blocks():
     try:
         with conn.cursor() as cur:
             sql = """
-                SELECT id, estate_id, block_code, soil_type, growth_stage, area_hectares
+                SELECT id, estate_id, block_code, soil_type, growth_stage, area_hectares, state
                 FROM block WHERE estate_id = %s
                 ORDER BY block_code
             """
@@ -1174,8 +1174,8 @@ def create_block():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO block (estate_id, block_code, soil_type, growth_stage, area_hectares)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO block (estate_id, block_code, soil_type, growth_stage, area_hectares, state)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
                 estate_id,
@@ -1183,6 +1183,7 @@ def create_block():
                 data.get('soil_type'),
                 data.get('growth_stage'),
                 data.get('area_hectares'),
+                data.get('state', 'active'),
             ))
             block_id = str(cur.fetchone()[0])
             conn.commit()
@@ -1200,7 +1201,7 @@ def create_block():
 def update_block(block_id):
     """PUT /api/labour/blocks/<id> — update block details."""
     data = request.get_json() or {}
-    allowed = {'block_code', 'soil_type', 'growth_stage', 'area_hectares'}
+    allowed = {'block_code', 'soil_type', 'growth_stage', 'area_hectares', 'state'}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'No valid fields'}), 400
