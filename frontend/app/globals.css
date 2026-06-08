@@ -789,7 +789,12 @@ nav a:hover {
   height: 100vh;
   z-index: 50;
   overflow-y: auto;
-  transition: transform var(--ease-slow);
+  overflow-x: hidden;
+  transition: width 0.25s ease, transform var(--ease-slow);
+}
+
+.dash-sidebar.collapsed {
+  width: 72px;
 }
 
 .dash-sidebar-logo {
@@ -798,6 +803,17 @@ nav a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.dash-sidebar.collapsed .dash-sidebar-logo {
+  justify-content: center;
+  padding: var(--space-6) 0;
+}
+
+.dash-sidebar.collapsed .dash-sidebar-brand {
+  display: none;
 }
 
 .dash-sidebar-logo-mark {
@@ -844,6 +860,15 @@ nav a:hover {
   text-transform: uppercase;
   color: rgba(255,255,255,0.4);
   padding: var(--space-4) var(--space-3) var(--space-2);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 0.2s ease;
+}
+
+.dash-sidebar.collapsed .dash-nav-label {
+  opacity: 0;
+  height: 0;
+  padding: 0;
 }
 
 .dash-nav-item {
@@ -862,6 +887,22 @@ nav a:hover {
   width: 100%;
   text-align: left;
   font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dash-sidebar.collapsed .dash-nav-item {
+  justify-content: center;
+  padding: 0.625rem 0;
+  gap: 0;
+}
+
+.dash-sidebar.collapsed .dash-nav-item-label {
+  display: none;
+}
+
+.dash-sidebar.collapsed .dash-nav-badge {
+  display: none;
 }
 
 .dash-nav-item:hover {
@@ -885,6 +926,11 @@ nav a:hover {
   flex-shrink: 0;
 }
 
+.dash-sidebar.collapsed .dash-nav-icon {
+  opacity: 0.85;
+  font-size: 1.25rem;
+}
+
 .dash-nav-badge {
   margin-left: auto;
   font-size: 0.6875rem;
@@ -906,6 +952,33 @@ nav a:hover {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  transition: margin-left 0.25s ease;
+}
+
+.dash-main.sidebar-collapsed {
+  margin-left: 72px;
+}
+
+.dash-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: var(--space-3) auto;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.7);
+  cursor: pointer;
+  font-size: 1rem;
+  flex-shrink: 0;
+  transition: background var(--ease-base), color var(--ease-base);
+}
+
+.dash-sidebar-toggle:hover {
+  background: rgba(255,255,255,0.18);
+  color: white;
 }
 
 .dash-topbar {
@@ -1496,7 +1569,8 @@ tr:hover td {
     transform: translateX(0);
   }
 
-  .dash-main {
+  .dash-main,
+  .dash-main.sidebar-collapsed {
     margin-left: 0;
   }
 

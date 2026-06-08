@@ -706,8 +706,20 @@ function LabourTab() {
   const [deleteTarget, setDeleteTarget] = useState(null); // employee obj
   const [deleting, setDeleting]         = useState(false);
 
-  // Current week's Monday
-  const weekStart = (() => {
+  // Yield recording modal state
+  const [yieldModal, setYieldModal]   = useState(false);
+  const [yieldInputs, setYieldInputs] = useState({});  // { assignmentId: kg_string }
+  const [yieldSaving, setYieldSaving] = useState(false);
+  const [yieldError, setYieldError]   = useState('');
+
+  // Plan creation modal state
+  const [planCreateModal, setPlanCreateModal] = useState(false);
+  const [planCreateBlocks, setPlanCreateBlocks] = useState([]); // [{...block, groupId:'', expectedYield:''}]
+  const [planCreateLoading, setPlanCreateLoading] = useState(false);
+  const [planCreateError, setPlanCreateError] = useState('');
+
+  // First day of the current month (YYYY-MM-01)
+  const monthStart = (() => {
     const d = new Date();
     const day = d.getDay();
     const diff = d.getDate() - day + (day === 0 ? -6 : 1);
@@ -733,8 +745,12 @@ function LabourTab() {
 
     const load = async () => {
       try {
-        if (view === 'week') {
-          const plans = await apiService.getLabourPlans(token, { estateId, weekStart });
+        if (view === 'month') {
+          const [plans, grps] = await Promise.all([
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+            apiService.getWorkerGroups(token, estateId),
+          ]);
+          setGroups(grps);
           if (plans.length > 0) {
             const detail = await apiService.getLabourPlan(token, plans[0].id);
             setPlan(detail);
@@ -742,8 +758,17 @@ function LabourTab() {
             setPlan(null);
           }
         } else if (view === 'rotation') {
-          const r = await apiService.getRotation(token, estateId);
-          setRotation(r.length > 0 ? r[0] : null);
+          const [rotData, plans] = await Promise.all([
+            apiService.getRotation(token, estateId),
+            apiService.getLabourPlans(token, { estateId, monthStart }),
+          ]);
+          setRotation(rotData.length > 0 ? rotData[0] : null);
+          if (plans.length > 0) {
+            const detail = await apiService.getLabourPlan(token, plans[0].id);
+            setPlan(detail);
+          } else {
+            setPlan(null);
+          }
         } else if (view === 'employees') {
           const [emps, grps] = await Promise.all([
             apiService.getEmployees(token, { estateId }),
@@ -916,7 +941,26 @@ function LabourTab() {
             <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)',
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
-              <p>No labour plan for this week yet.</p>
+              <p>No labour plan for this month yet.</p>
+              <button onClick={async () => {
+                setPlanCreateError('');
+                setPlanCreateLoading(true);
+                try {
+                  const [blocks, grps] = await Promise.all([
+                    apiService.getBlocks(token, estateId),
+                    apiService.getWorkerGroups(token, estateId),
+                  ]);
+                  setGroups(grps);
+                  setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                  setPlanCreateModal(true);
+                } catch (e) {
+                  setError(e.message);
+                } finally {
+                  setPlanCreateLoading(false);
+                }
+              }} disabled={loading || planCreateLoading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem' }}>
+                {planCreateLoading ? 'Loading...' : '+ Create Plan'}
+              </button>
             </div>
           ) : (
             <div className="table-wrap">
@@ -927,7 +971,28 @@ function LabourTab() {
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
                 </div>
-                <span className="badge badge-neutral">{assignments.length} blocks</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="badge badge-neutral">{assignments.length} blocks</span>
+                  <button onClick={async () => {
+                    setPlanCreateError('');
+                    setPlanCreateLoading(true);
+                    try {
+                      const [blocks, grps] = await Promise.all([
+                        apiService.getBlocks(token, estateId),
+                        apiService.getWorkerGroups(token, estateId),
+                      ]);
+                      setGroups(grps);
+                      // Only show blocks not already in the plan
+                      const assignedCodes = new Set(assignments.map(a => a.block_code));
+                      const unassigned = blocks.filter(b => !assignedCodes.has(b.block_code));
+                      setPlanCreateBlocks(unassigned.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                      setPlanCreateModal(true);
+                    } catch (e) { setError(e.message); }
+                    finally { setPlanCreateLoading(false); }
+                  }} disabled={planCreateLoading} style={{ padding: '5px 14px', borderRadius: 7, border: '1.5px dashed var(--color-primary)', background: 'transparent', color: 'var(--color-primary)', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    {planCreateLoading ? '…' : '+ Add Blocks'}
+                  </button>
+                </div>
               </div>
               <table>
                 <thead>
@@ -943,7 +1008,30 @@ function LabourTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {assignments.map(a => {
+                  {sortedAssignments.length === 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                        No block assignments yet.
+                        <button onClick={async () => {
+                          setPlanCreateError('');
+                          setPlanCreateLoading(true);
+                          try {
+                            const [blocks, grps] = await Promise.all([
+                              apiService.getBlocks(token, estateId),
+                              apiService.getWorkerGroups(token, estateId),
+                            ]);
+                            setGroups(grps);
+                            setPlanCreateBlocks(blocks.map(b => ({ ...b, groupId: '', expectedYield: '' })));
+                            setPlanCreateModal(true);
+                          } catch (e) { setError(e.message); }
+                          finally { setPlanCreateLoading(false); }
+                        }} style={{ marginLeft: 12, padding: '4px 14px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                          + Add Blocks
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {sortedAssignments.map(a => {
                     const exp = a.expected_yield_kg || 0;
                     const act = a.actual_yield_kg   || 0;
                     const eff = exp > 0 ? ((act / exp) * 100) : 0;
@@ -957,7 +1045,7 @@ function LabourTab() {
                       <tr key={a.id}>
                         <td style={{ fontWeight: 700, color: 'var(--color-text)' }}>
                           {a.block_code}
-                          {a.is_manual_override && (
+                          {a.is_manual_override && a.original_group_name && (
                             <span title={a.override_reason || 'Manually overridden'}
                                   style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--color-warning)', fontWeight: 600 }}>
                               ✎
@@ -965,11 +1053,70 @@ function LabourTab() {
                           )}
                         </td>
                         <td style={{ fontSize: '0.875rem' }}>
-                          <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name || '—'}</div>
-                          {a.is_manual_override && a.original_group_name && (
-                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-                              was: {a.original_group_name}
+                          {a.group_name ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name}</div>
+                              {a.is_manual_override && a.original_group_name && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                                  (was: {a.original_group_name})
+                                </div>
+                              )}
+                              {(canWrite || isManager) && (
+                                <button
+                                  onClick={async () => {
+                                    setSavingTarget(true);
+                                    try {
+                                      await apiService.removeGroupFromAssignment(token, a.id);
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setError('');
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
+                                  }}
+                                  disabled={savingTarget}
+                                  style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.4)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                >
+                                  Remove
+                                </button>
+                              )}
                             </div>
+                          ) : (canWrite || isManager) && (
+                            addingGroup === a.id ? (
+                              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                <select
+                                  autoFocus
+                                  defaultValue=""
+                                  disabled={savingTarget}
+                                  onChange={async (e) => {
+                                    if (!e.target.value) return;
+                                    setSavingTarget(true);
+                                    try {
+                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
+                                      const updated = await apiService.getLabourPlan(token, plan.id);
+                                      setPlan(updated);
+                                      setAddingGroup(null);
+                                      setError('');
+                                    } catch (err) { setError(err.message); }
+                                    finally { setSavingTarget(false); }
+                                  }}
+                                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-primary)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 120 }}
+                                >
+                                  <option value="">Select group…</option>
+                                  {groups
+                                    .filter(g => !assignments.some(ax => ax.worker_group_id && String(ax.worker_group_id) === String(g.id)))
+                                    .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                                  }
+                                </select>
+                                <button onClick={() => setAddingGroup(null)} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setAddingGroup(a.id)}
+                                style={{ padding: '4px 12px', borderRadius: 6, border: '1.5px dashed var(--color-warning)', background: 'transparent', color: 'var(--color-warning)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                              >
+                                + Add Group
+                              </button>
+                            )
                           )}
                         </td>
                         <td>
@@ -1045,25 +1192,46 @@ function LabourTab() {
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(rotation.matrix).sort(([a],[b]) => a - b).map(([rn, cells]) => (
-                  <tr key={rn} style={{
-                    background: parseInt(rn) === rotation.current_round
-                      ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
-                  }}>
-                    <td style={{ fontWeight: 700 }}>
-                      Round {rn}
-                      {parseInt(rn) === rotation.current_round && (
-                        <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
-                      )}
-                    </td>
-                    {cells.map(c => (
-                      <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
-                        <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                {sortedRotationRows.map(([rn, cells]) => {
+                  const isCurrent = parseInt(rn) === rotation.current_round;
+                  // For the current round, build actual assignment lookup from plan
+                  const actualByBlock = isCurrent && plan
+                    ? Object.fromEntries((plan.assignments || []).map(a => [a.block_code, a]))
+                    : null;
+                  return (
+                    <tr key={rn} style={{
+                      background: isCurrent ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
+                    }}>
+                      <td style={{ fontWeight: 700 }}>
+                        Round {rn}
+                        {isCurrent && (
+                          <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
+                        )}
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      {cells.map(c => {
+                        const actual = actualByBlock?.[c.block_code];
+                        const changed = actual && actual.group_code !== c.group_code;
+                        return (
+                          <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                            {actual ? (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                                  {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
+                                </div>
+                                <div style={{ fontSize: '0.7rem' }}>{actual.group_capacity ?? c.capacity} workers</div>
+                              </>
+                            ) : (
+                              <>
+                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
+                                <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
+                              </>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1365,6 +1533,223 @@ function LabourTab() {
           )}
         </>
       )}
+
+      {/* ── Plan Creation Modal ── */}
+      {planCreateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 14, padding: 0, width: '90%', maxWidth: 820, maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.35)' }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-text)' }}>{plan ? 'Add Blocks to Plan' : 'Create Labour Plan'}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{monthStart} — assign groups and set expected yields for each block</div>
+              </div>
+              <button onClick={() => setPlanCreateModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--color-text-muted)', padding: '4px 8px' }}>✕</button>
+            </div>
+
+            {/* Block table */}
+            <div style={{ overflowY: 'auto', flex: 1, padding: '0 24px' }}>
+              {planCreateBlocks.length === 0 ? (
+                <p style={{ color: 'var(--color-text-muted)', padding: '32px 0', textAlign: 'center' }}>No blocks found for this estate.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Block</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>State</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Area (ha)</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Worker Group</th>
+                      <th style={{ textAlign: 'left', padding: '12px 8px', fontWeight: 600, color: 'var(--color-text-muted)' }}>Expected Yield (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planCreateBlocks.map((b, idx) => (
+                      <tr key={b.id} style={{ borderBottom: '1px solid var(--color-border)', background: idx % 2 === 0 ? 'transparent' : 'var(--color-surface-2)' }}>
+                        <td style={{ padding: '10px 8px', fontWeight: 700 }}>{b.block_code}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>{b.state || 'active'}</span>
+                        </td>
+                        <td style={{ padding: '10px 8px', color: 'var(--color-text-muted)' }}>{b.area_hectares ?? '—'}</td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <select
+                            value={b.groupId}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, groupId: e.target.value } : x))}
+                            style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 140 }}
+                          >
+                            <option value="">— Unassigned —</option>
+                            {groups
+                              .filter(g => !planCreateBlocks.some((x, i) => i !== idx && x.groupId && String(x.groupId) === String(g.id)))
+                              .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                            }
+                          </select>
+                        </td>
+                        <td style={{ padding: '10px 8px' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={b.expectedYield}
+                            onChange={e => setPlanCreateBlocks(prev => prev.map((x, i) => i === idx ? { ...x, expectedYield: e.target.value } : x))}
+                            style={{ width: 100, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem' }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            {planCreateError && <div style={{ padding: '8px 24px', color: 'var(--color-danger)', fontSize: '0.8rem' }}>{planCreateError}</div>}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button onClick={() => setPlanCreateModal(false)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontWeight: 500 }}>Cancel</button>
+              <button
+                disabled={planCreateLoading || planCreateBlocks.length === 0}
+                onClick={async () => {
+                  setPlanCreateLoading(true);
+                  setPlanCreateError('');
+                  try {
+                    let updatedPlan;
+                    if (plan) {
+                      // Add blocks to existing plan
+                      for (const b of planCreateBlocks) {
+                        await apiService.addAssignmentToPlan(token, plan.id, {
+                          block_id: b.id,
+                          worker_group_id: b.groupId || null,
+                          expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                        });
+                      }
+                      updatedPlan = await apiService.getLabourPlan(token, plan.id);
+                    } else {
+                      // Create new plan with all blocks
+                      const assignmentList = planCreateBlocks.map(b => ({
+                        block_id: b.id,
+                        worker_group_id: b.groupId || null,
+                        expected_yield_kg: b.expectedYield ? parseFloat(b.expectedYield) : 0,
+                      }));
+                      const result = await apiService.createManualPlan(token, {
+                        estate_id: estateId,
+                        period_start: monthStart,
+                        assignments: assignmentList,
+                        status: 'draft',
+                        notes: 'Manual plan creation',
+                      });
+                      updatedPlan = await apiService.getLabourPlan(token, result.plan_id);
+                    }
+                    setPlan(updatedPlan);
+                    setPlanCreateModal(false);
+                    setError('');
+                  } catch (e) {
+                    setPlanCreateError(e.message);
+                  } finally {
+                    setPlanCreateLoading(false);
+                  }
+                }}
+                style={{ padding: '8px 24px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, cursor: planCreateLoading ? 'not-allowed' : 'pointer', opacity: planCreateLoading ? 0.7 : 1 }}
+              >
+                {planCreateLoading ? (plan ? 'Adding…' : 'Creating…') : (plan ? 'Add Blocks' : 'Create Plan')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Record Yield Modal (top-level so it works from any sub-view) ── */}
+      {yieldModal && plan && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: 'var(--color-surface)', borderRadius: 16, padding: 32,
+            width: '100%', maxWidth: 560, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+            maxHeight: '90vh', overflowY: 'auto',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 4 }}>
+              Record Actual Yield
+            </div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              {plan.period_start} · {plan.estate_name} — enter harvested kg per block
+            </div>
+
+            {yieldError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
+                            color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {yieldError}
+              </div>
+            )}
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  {['Block', 'Group', 'Expected (kg)', 'Actual (kg)'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '6px 8px', fontSize: '0.75rem',
+                      color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)',
+                      fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em',
+                    }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {plan.assignments.map(a => (
+                  <tr key={a.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                    <td style={{ padding: '10px 8px', fontWeight: 700, fontSize: '0.9rem' }}>{a.block_code}</td>
+                    <td style={{ padding: '10px 8px', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                      {a.group_name || '—'}
+                    </td>
+                    <td style={{ padding: '10px 8px', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+                      {a.expected_yield_kg != null ? Math.round(a.expected_yield_kg).toLocaleString() : '—'}
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        placeholder="e.g. 24500"
+                        value={yieldInputs[a.id] ?? ''}
+                        onChange={e => setYieldInputs(prev => ({ ...prev, [a.id]: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '7px 10px', borderRadius: 6, boxSizing: 'border-box',
+                          border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                          color: 'var(--color-text)', fontSize: '0.875rem',
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setYieldModal(false); setYieldError(''); }}
+                disabled={yieldSaving}
+                style={{
+                  padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
+                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveYield}
+                disabled={yieldSaving}
+                style={{
+                  padding: '8px 24px', borderRadius: 8, border: 'none',
+                  background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600,
+                  opacity: yieldSaving ? 0.7 : 1,
+                }}
+              >
+                {yieldSaving ? 'Saving…' : 'Save Yield'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1391,6 +1776,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1415,7 +1801,7 @@ export default function DashboardPage() {
   return (
     <div className="dash-layout">
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="dash-sidebar">
+      <aside className={`dash-sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="dash-sidebar-logo">
           <div className="dash-sidebar-logo-mark">🌿</div>
           <div className="dash-sidebar-brand">
@@ -1431,9 +1817,10 @@ export default function DashboardPage() {
               key={item.id}
               className={`dash-nav-item ${activeTab === item.id ? 'active' : ''}`}
               onClick={() => setActiveTab(item.id)}
+              title={sidebarCollapsed ? item.label : undefined}
             >
               <span className="dash-nav-icon">{item.icon}</span>
-              {item.label}
+              <span className="dash-nav-item-label">{item.label}</span>
               {item.id === 'fertilizer' && (
                 <span className="dash-nav-badge">
                   {fertilizerBlocks.filter(b => b.status === 'overdue').length}
@@ -1452,20 +1839,17 @@ export default function DashboardPage() {
           ))}
         </nav>
 
-        <div className="dash-sidebar-footer">
-          <button
-            className="dash-nav-item"
-            onClick={logout}
-            style={{ color: 'rgba(255,100,100,0.8)' }}
-          >
-            <span className="dash-nav-icon">🚪</span>
-            Sign Out
-          </button>
-        </div>
+        <button
+          className="dash-sidebar-toggle"
+          onClick={() => setSidebarCollapsed(c => !c)}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {sidebarCollapsed ? '›' : '‹'}
+        </button>
       </aside>
 
       {/* ── Main Area ────────────────────────────────────────── */}
-      <div className="dash-main">
+      <div className={`dash-main${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
         {/* Top Bar */}
         <header className="dash-topbar">
           <div className="dash-topbar-left">

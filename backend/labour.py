@@ -364,7 +364,7 @@ def get_plan(plan_id):
                 return jsonify({'error': 'Forbidden'}), 403
 
             cur.execute("""
-                SELECT ba.id, b.block_code, b.worker_capacity,
+                SELECT ba.id, ba.block_id, b.block_code, b.worker_capacity,
                        wg.id AS worker_group_id,
                        wg.group_name, wg.group_code, wg.capacity AS group_capacity,
                        ba.assignment_date, ba.rotation_round, ba.is_manual_override,
@@ -721,8 +721,6 @@ def update_employee(employee_id):
                     cur.execute("""
                         INSERT INTO worker_group_member (group_id, employee_id, joined_date, is_active)
                         VALUES (%s, %s, CURRENT_DATE, TRUE)
-                        ON CONFLICT (group_id, employee_id)
-                        DO UPDATE SET is_active = TRUE, left_date = NULL, updated_at = NOW()
                     """, (group_id, employee_id))
                     # If skill_type is 'supervisor', set as supervisor for this group
                     if updates.get('skill_type') == 'supervisor':
@@ -1359,8 +1357,8 @@ def create_manual_plan():
 
     if not estate_id or not period_raw:
         return jsonify({'error': 'estate_id and period_start required'}), 400
-    if not assignments_data:
-        return jsonify({'error': 'assignments array required (empty list allowed)'}), 400
+    if assignments_data is None:
+        return jsonify({'error': 'assignments must be a list'}), 400
 
     period_start = _first_of_month(period_raw)
     
@@ -1392,23 +1390,23 @@ def create_manual_plan():
             
             plan_id = str(cur.fetchone()[0])
 
-            # Create assignments
+            # Create assignments (group_id may be None for unassigned blocks)
             created_count = 0
             for assign in assignments_data:
                 block_id = assign.get('block_id')
-                group_id = assign.get('worker_group_id')
-                expected_yield = assign.get('expected_yield_kg', 0)
-                
-                if not block_id or not group_id:
+                group_id = assign.get('worker_group_id') or None
+                expected_yield = assign.get('expected_yield_kg') or 0
+
+                if not block_id:
                     continue
-                    
+
                 cur.execute("""
-                    INSERT INTO block_assignment 
-                    (labour_plan_id, block_id, worker_group_id, expected_yield_kg, 
-                     is_manual_override, override_reason, status)
-                    VALUES (%s, %s, %s, %s, TRUE, %s, 'open')
-                """, (plan_id, block_id, group_id, expected_yield, 
-                      'Manual assignment (cron fallback)'))
+                    INSERT INTO block_assignment
+                    (labour_plan_id, block_id, worker_group_id, expected_yield_kg,
+                     is_manual_override, override_reason, status, assignment_date)
+                    VALUES (%s, %s, %s, %s, TRUE, %s, 'scheduled', CURRENT_DATE)
+                """, (plan_id, block_id, group_id, expected_yield,
+                      'Manual plan creation'))
                 created_count += 1
 
             conn.commit()
@@ -1437,11 +1435,11 @@ def add_assignment_to_plan(plan_id):
     """
     data = request.get_json() or {}
     block_id = data.get('block_id')
-    group_id = data.get('worker_group_id')
-    expected_yield = data.get('expected_yield_kg', 0)
-    
-    if not block_id or not group_id:
-        return jsonify({'error': 'block_id and worker_group_id required'}), 400
+    group_id = data.get('worker_group_id') or None
+    expected_yield = data.get('expected_yield_kg') or 0
+
+    if not block_id:
+        return jsonify({'error': 'block_id required'}), 400
 
     conn = _db()
     if not conn:
@@ -1453,16 +1451,22 @@ def add_assignment_to_plan(plan_id):
             if not cur.fetchone():
                 return jsonify({'error': 'Plan not found'}), 404
 
+            # Check block not already in plan
+            cur.execute(
+                "SELECT id FROM block_assignment WHERE labour_plan_id = %s AND block_id = %s",
+                (plan_id, block_id)
+            )
+            if cur.fetchone():
+                return jsonify({'error': 'Block already in this plan'}), 409
+
             # Add assignment
             cur.execute("""
-                INSERT INTO block_assignment 
-                (labour_plan_id, block_id, worker_group_id, expected_yield_kg, 
-                 is_manual_override, override_reason, status)
-                VALUES (%s, %s, %s, %s, TRUE, %s, 'open')
-                ON CONFLICT (labour_plan_id, block_id, worker_group_id) 
-                DO UPDATE SET expected_yield_kg = %s
+                INSERT INTO block_assignment
+                (labour_plan_id, block_id, worker_group_id, expected_yield_kg,
+                 is_manual_override, override_reason, status, assignment_date)
+                VALUES (%s, %s, %s, %s, TRUE, %s, 'scheduled', CURRENT_DATE)
             """, (plan_id, block_id, group_id, expected_yield,
-                  'Manual assignment (cron fallback)', expected_yield))
+                  'Manual assignment'))
             
             conn.commit()
         return jsonify({'message': 'Assignment added', 'block_id': block_id}), 201
