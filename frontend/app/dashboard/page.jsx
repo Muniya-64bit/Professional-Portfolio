@@ -2316,8 +2316,7 @@ function BlocksTab() {
 
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
-  { id: 'estates',     icon: '🏗️', label: 'Estates Management' },
-  { id: 'blocks',      icon: '🏘️', label: 'Blocks Management' },
+  { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
   { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
   { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
@@ -2328,8 +2327,7 @@ const navItems = [
 
 const tabTitles = {
   overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
-  estates:    { title: 'Estates Management',  sub: 'Create, update and manage all estates' },
-  blocks:     { title: 'Blocks Management',  sub: 'View, add, edit and manage all plantation blocks' },
+  'estate-blocks': { title: 'Estates & Blocks',  sub: 'Manage all estates and their plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
   fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
@@ -2443,8 +2441,7 @@ export default function DashboardPage() {
           </div>
 
           {activeTab === 'overview'    && <OverviewTab />}
-          {activeTab === 'estates'     && <EstatesTab />}
-          {activeTab === 'blocks'      && <BlocksTab />}
+          {activeTab === 'estate-blocks' && <EstateBlocksTab />}
           {activeTab === 'roi'         && <ROITab />}
           {activeTab === 'water'       && <WaterTab />}
           {activeTab === 'fertilizer'  && <FertilizerTab />}
