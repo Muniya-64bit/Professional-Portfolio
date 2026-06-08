@@ -1,10 +1,10 @@
 {
-  "r2_train": 0.9969,
-  "r2_test": 0.9499,
-  "rmse_test": 92.91,
-  "mae_test": 66.71,
-  "cv_r2_mean": 0.8666,
-  "cv_r2_std": 0.0848,
+  "r2_train": 0.997,
+  "r2_test": 0.9487,
+  "rmse_test": 93.94,
+  "mae_test": 67.1,
+  "cv_r2_mean": 0.869,
+  "cv_r2_std": 0.0824,
   "model_version": "xgboost_v1",
   "features": [
     "zone",

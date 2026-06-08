@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { apiService } from '../api/apiService';
 import { useAuth } from '../context/AuthContext';
+import { DataEntryModal } from '../components/DataEntryModal';
+import { CSVImportModal } from '../components/CSVImportModal';
 
 /* ── Mock Data ──────────────────────────────────────────────────────────── */
 const estates = [
@@ -216,82 +218,455 @@ function OverviewTab() {
 
 /* ── Tab: ROI ─────────────────────────────────────────────────────────── */
 function ROITab() {
+  const { token } = useAuth();
+  const [estates, setEstates] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [rankings, setRankings] = useState([]);
+  const [estateMonthlyData, setEstateMonthlyData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [showCSVImport, setShowCSVImport] = useState(null);
+  
+  // Selected filters
+  const [selectedEstateId, setSelectedEstateId] = useState('');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+
+  // Generate year options (last 5 years)
+  const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
+    value: i + 1,
+    label: new Date(2000, i, 1).toLocaleString('default', { month: 'long' })
+  }));
+
+  // Load all data
+  const loadROIData = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [estatesData] = await Promise.all([
+        apiService.getROIEstates(token),
+      ]);
+      setEstates(estatesData);
+      if (estatesData.length > 0 && !selectedEstateId) {
+        setSelectedEstateId(estatesData[0].id);
+      }
+    } catch (err) {
+      console.error('Failed to load ROI data:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load data for selected filters
+  const loadFilteredData = async () => {
+    if (!selectedEstateId || !selectedYear || !selectedMonth) return;
+    
+    try {
+      const [summaryData, rankingsData, trendData] = await Promise.all([
+        apiService.getROISummary(token, { year: selectedYear, month: selectedMonth }),
+        apiService.getROIRankings(token, { year: selectedYear, month: selectedMonth }),
+        apiService.getROIEstateTrend(token, selectedEstateId, selectedYear),
+      ]);
+      setSummary(summaryData);
+      setRankings(rankingsData);
+      setEstateMonthlyData(trendData);
+    } catch (err) {
+      console.error('Failed to load filtered ROI data:', err);
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      loadROIData();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token && selectedEstateId && selectedYear && selectedMonth) {
+      loadFilteredData();
+    }
+  }, [token, selectedEstateId, selectedYear, selectedMonth]);
+
+  const handleModalClose = () => {
+    setShowModal(false);
+  };
+
+  const handleDataSaved = () => {
+    loadROIData();
+    loadFilteredData();
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+        <div style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>⏳</div>
+        <p>Loading ROI data…</p>
+      </div>
+    );
+  }
+
+  // Simple line graph for estate ROI over the year
+  const maxCost = Math.max(...estateMonthlyData.map(d => d.cost_per_kg), 1);
+  const graphHeight = 200;
+
   return (
     <>
-      <div className="kpi-grid">
-        <KpiCard icon="🏆" iconBg="kpi-icon-green"  label="Best Cost/kg (Kelani)" value="Rs. 285" unit="" delta={-3.2} />
-        <KpiCard icon="📦" iconBg="kpi-icon-teal"   label="Total Production (Jun)" value="12,450"  unit="kg" delta={-8.3} />
-        <KpiCard icon="📈" iconBg="kpi-icon-blue"   label="Avg Cost / kg (All)"    value="Rs. 310" unit="" delta={+0.5} />
-        <KpiCard icon="🏭" iconBg="kpi-icon-amber"  label="Highest Cost (Ratnapura)" value="Rs. 345" unit="" delta={+2.3} />
+      {/* Filter Controls */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Estate:
+          </label>
+          <select
+            value={selectedEstateId}
+            onChange={e => setSelectedEstateId(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '180px'
+            }}
+          >
+            <option value="">Select Estate</option>
+            {estates.map(estate => (
+              <option key={estate.id} value={estate.id}>{estate.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Year:
+          </label>
+          <select
+            value={selectedYear}
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '120px'
+            }}
+          >
+            {yearOptions.map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
+            Month:
+          </label>
+          <select
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(parseInt(e.target.value))}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: '0.875rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              minWidth: '140px'
+            }}
+          >
+            {monthOptions.map(m => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <div className="table-wrap">
+      {/* KPI Cards */}
+      <div className="kpi-grid">
+        <KpiCard 
+          icon="🏆" 
+          iconBg="kpi-icon-green"  
+          label="Best Cost/kg" 
+          value={summary?.best_cost_per_kg ? `Rs. ${summary.best_cost_per_kg}` : '—'} 
+          unit="" 
+        />
+        <KpiCard 
+          icon="📦" 
+          iconBg="kpi-icon-teal"   
+          label="Total Estates" 
+          value={summary?.total_estates || '—'}  
+          unit="" 
+        />
+        <KpiCard 
+          icon="📈" 
+          iconBg="kpi-icon-blue"   
+          label="Avg Cost / kg" 
+          value={summary?.avg_cost_per_kg ? `Rs. ${summary.avg_cost_per_kg}` : '—'} 
+          unit="" 
+        />
+        <KpiCard 
+          icon="⚠️" 
+          iconBg="kpi-icon-amber"  
+          label="Flagged Records" 
+          value={summary?.flagged_count || '0'} 
+          unit="" 
+        />
+      </div>
+
+      {/* Estate ROI Graph */}
+      {estateMonthlyData.length > 0 && (
+        <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
+          <div className="section-card-header">
+            <div className="section-card-title">
+              <div className="section-card-title-icon">📈</div>
+              {estates.find(e => e.id === selectedEstateId)?.name || 'Estate'} - ROI Trend {selectedYear}
+            </div>
+          </div>
+          <div className="section-card-body" style={{ paddingBottom: '2rem' }}>
+            <svg
+              width="100%"
+              height={graphHeight}
+              style={{ minHeight: graphHeight }}
+              viewBox={`0 0 1200 ${graphHeight}`}
+              preserveAspectRatio="xMidYMid meet"
+            >
+              {/* Grid lines */}
+              {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
+                const y = graphHeight * (1 - pct);
+                const cost = maxCost * pct;
+                return (
+                  <g key={`grid-${i}`}>
+                    <line x1="50" y1={y} x2="1200" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" opacity="0.3" />
+                    <text x="20" y={y + 5} fontSize="12" fill="var(--color-text-muted)" textAnchor="end">
+                      {cost.toFixed(0)}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Line chart */}
+              <polyline
+                points={estateMonthlyData.map((d, i) => {
+                  const x = 100 + (i / 11) * 1100;
+                  const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
+                  return `${x},${y}`;
+                }).join(' ')}
+                fill="none"
+                stroke="var(--color-primary)"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+
+              {/* Data points */}
+              {estateMonthlyData.map((d, i) => {
+                const x = 100 + (i / 11) * 1100;
+                const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
+                const isSelected = i === selectedMonth - 1;
+                return (
+                  <circle
+                    key={`point-${i}`}
+                    cx={x}
+                    cy={y}
+                    r={isSelected ? 6 : 4}
+                    fill={isSelected ? 'var(--color-primary)' : 'var(--color-surface-3)'}
+                    stroke="var(--color-primary)"
+                    strokeWidth="2"
+                  />
+                );
+              })}
+
+              {/* Month labels */}
+              {monthOptions.map((m, i) => {
+                const x = 100 + (i / 11) * 1100;
+                return (
+                  <text key={`label-${i}`} x={x} y={graphHeight - 10} fontSize="12" fill="var(--color-text-muted)" textAnchor="middle">
+                    {m.label.slice(0, 3)}
+                  </text>
+                );
+              })}
+            </svg>
+          </div>
+        </div>
+      )}
+
+      {/* Estate Rankings for Selected Month */}
+      <div className="table-wrap" style={{ marginTop: 'var(--space-6)' }}>
         <div className="table-header-bar">
           <div>
             <div className="table-title">Estate ROI Rankings</div>
-            <div className="table-subtitle">Sorted by cost-per-kg · June 2026</div>
+            <div className="table-subtitle">
+              For {monthOptions.find(m => m.value === selectedMonth)?.label} {selectedYear}
+            </div>
           </div>
-          <span className="badge badge-neutral">4 estates</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                background: 'var(--color-primary)',
+                color: '#fff',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.opacity = '0.9';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.opacity = '1';
+              }}
+            >
+              + Add Monthly Data
+            </button>
+            <button
+              onClick={() => setShowCSVImport('costs')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'transparent',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.background = 'var(--color-surface-2)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.background = 'transparent';
+              }}
+            >
+              📥 Import Costs CSV
+            </button>
+            <button
+              onClick={() => setShowCSVImport('yield')}
+              style={{
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: '1px solid var(--color-border)',
+                background: 'transparent',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                fontWeight: '600',
+                fontSize: '0.875rem',
+                transition: 'all 0.2s',
+              }}
+              onMouseOver={(e) => {
+                e.target.style.background = 'var(--color-surface-2)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.background = 'transparent';
+              }}
+            >
+              📥 Import Yield CSV
+            </button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
               <th>Rank</th>
               <th>Estate</th>
-              <th>Location</th>
+              <th>Region</th>
               <th>Cost / kg</th>
-              <th>Production (kg)</th>
-              <th>MoM Δ</th>
-              <th>7-Day Trend</th>
+              <th>Yield (kg)</th>
+              <th>Total Cost</th>
+              <th>Status</th>
             </tr>
           </thead>
           <tbody>
-            {estates.map(e => (
-              <tr key={e.id}>
-                <td><div className={`rank-badge rank-${e.rank}`}>{e.rank}</div></td>
-                <td style={{ fontWeight: 600, color: 'var(--color-text)' }}>{e.name}</td>
-                <td>{e.location}</td>
-                <td style={{ fontWeight: 700, fontSize: '1.05rem' }}>Rs. {e.costPerKg}</td>
-                <td>{e.production.toLocaleString()}</td>
-                <td>
-                  <span className={e.delta < 0 ? 'trend-up' : 'trend-down'} style={{ fontWeight: 600 }}>
-                    {e.delta > 0 ? '↑' : '↓'} {Math.abs(e.delta)}%
-                  </span>
+            {rankings.length === 0 ? (
+              <tr>
+                <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
+                  No ROI data available. Add input costs and yield records to populate rankings.
                 </td>
-                <td style={{ minWidth: 80 }}><Sparkline data={e.trend} height={24} /></td>
               </tr>
-            ))}
+            ) : (
+              rankings.map((e, idx) => (
+                <tr key={idx}>
+                  <td>
+                    <div className={`rank-badge rank-${e.rank || 1}`}>
+                      {e.rank || '—'}
+                    </div>
+                  </td>
+                  <td style={{ fontWeight: '600', color: 'var(--color-text)' }}>{e.estate_name || e.name}</td>
+                  <td>{e.region || '—'}</td>
+                  <td style={{ fontWeight: '700', fontSize: '1.05rem' }}>
+                    {e.cost_per_kg ? `Rs. ${e.cost_per_kg.toFixed(2)}` : '—'}
+                  </td>
+                  <td>{e.yield_kg ? e.yield_kg.toLocaleString() : '—'}</td>
+                  <td>
+                    {e.total_cost ? `Rs. ${e.total_cost.toLocaleString()}` : '—'}
+                  </td>
+                  <td>
+                    {e.is_flagged ? (
+                      <span 
+                        className="badge badge-warning"
+                        title={e.flag_reason}
+                        style={{ cursor: 'help' }}
+                      >
+                        ⚠️ Flagged
+                      </span>
+                    ) : (
+                      <span className="badge badge-success">✓ OK</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Simple horizontal bar chart */}
-      <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
-        <div className="section-card-header">
-          <div className="section-card-title">
-            <div className="section-card-title-icon">📊</div>
-            Cost Per kg Comparison
-          </div>
-        </div>
-        <div className="section-card-body">
-          {estates.map(e => {
-            const maxCost = 400;
-            const pct = (e.costPerKg / maxCost) * 100;
-            const colors = ['progress-green', 'progress-green', 'progress-amber', 'progress-red'];
-            return (
-              <div key={e.id} style={{ marginBottom: 'var(--space-5)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-2)', fontSize: '0.9rem' }}>
-                  <span style={{ fontWeight: 600, color: 'var(--color-text)' }}>{e.name}</span>
-                  <span style={{ fontWeight: 700 }}>Rs. {e.costPerKg}</span>
-                </div>
-                <div className="progress-wrap" style={{ height: 12 }}>
-                  <div className={`progress-bar ${colors[e.rank - 1]}`} style={{ width: `${pct}%` }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* Data Entry Modal */}
+      <DataEntryModal
+        isOpen={showModal}
+        onClose={handleModalClose}
+        estates={estates}
+        token={token}
+        onSuccess={handleDataSaved}
+        apiService={apiService}
+      />
+
+      {/* CSV Import Modals */}
+      <CSVImportModal
+        isOpen={showCSVImport === 'costs'}
+        onClose={() => setShowCSVImport(null)}
+        recordType="costs"
+        token={token}
+        apiService={apiService}
+        onSuccess={handleDataSaved}
+        estates={estates}
+      />
+
+      <CSVImportModal
+        isOpen={showCSVImport === 'yield'}
+        onClose={() => setShowCSVImport(null)}
+        recordType="yield"
+        token={token}
+        apiService={apiService}
+        onSuccess={handleDataSaved}
+        estates={estates}
+      />
     </>
   );
 }
