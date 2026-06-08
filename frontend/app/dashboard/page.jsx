@@ -482,6 +482,11 @@ function LabourTab() {
   const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
   const [savingTarget, setSavingTarget]   = useState(false);
 
+  // Yield editing state
+  const [editingYield, setEditingYield]   = useState(null);  // assignment id being edited
+  const [yieldInputsTable, setYieldInputsTable] = useState({});  // { assignmentId: value }
+  const [savingYield, setSavingYield]     = useState(false);
+
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
   const [empForm, setEmpForm]       = useState({
@@ -689,6 +694,37 @@ function LabourTab() {
     }
   };
 
+  const handleSaveYieldValue = async (assignmentId, newValue) => {
+    if (newValue === '' || newValue === null) {
+      setEditingYield(null);
+      return;
+    }
+    setSavingYield(true);
+    try {
+      const numValue = parseFloat(newValue);
+      if (isNaN(numValue)) throw new Error('Invalid number');
+      await apiService.recordPlanYield(token, plan.id, [{ assignment_id: assignmentId, actual_yield_kg: numValue }]);
+      // Reload plan to reflect updated yields
+      const updated = await apiService.getLabourPlan(token, plan.id);
+      setPlan(updated);
+      setEditingYield(null);
+    } catch (e) {
+      console.error('Error saving yield:', e);
+      setEditingYield(null);
+    } finally {
+      setSavingYield(false);
+    }
+  };
+
+  const openYieldEdit = () => {
+    const pre = {};
+    (plan?.assignments || []).forEach(a => {
+      pre[a.id] = a.actual_yield_kg != null ? String(a.actual_yield_kg) : '';
+    });
+    setYieldInputsTable(pre);
+    setEditingYield('table'); // Mark that we're in table edit mode
+  };
+
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
   const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
@@ -847,14 +883,16 @@ function LabourTab() {
                   <span className="badge badge-neutral">{assignments.length} blocks</span>
                   {(canWrite || isManager) && (
                     <button
-                      onClick={openYieldModal}
+                      onClick={openYieldEdit}
+                      disabled={editingYield === 'table'}
                       style={{
-                        padding: '7px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                        background: 'var(--color-primary)', color: '#fff', fontWeight: 600,
-                        fontSize: '0.8125rem',
+                        padding: '7px 16px', borderRadius: 8, border: 'none', cursor: editingYield === 'table' ? 'default' : 'pointer',
+                        background: editingYield === 'table' ? 'var(--color-success)' : 'var(--color-primary)',
+                        color: '#fff', fontWeight: 600,
+                        fontSize: '0.8125rem', opacity: editingYield === 'table' ? 0.8 : 1
                       }}
                     >
-                      Record Yield
+                      {editingYield === 'table' ? '✓ Editing...' : '✏️ Record Yield'}
                     </button>
                   )}
                 </div>
@@ -971,7 +1009,65 @@ function LabourTab() {
                             </div>
                           )}
                         </td>
-                        <td style={{ fontWeight: 700 }}>{act ? Math.round(act).toLocaleString() : '—'}</td>
+                        <td style={{ fontWeight: 700 }}>
+                          {editingYield === 'table' ? (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={yieldInputsTable[a.id] ?? act ?? ''}
+                                onChange={e => setYieldInputsTable(p => ({ ...p, [a.id]: e.target.value }))}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleSaveYieldValue(a.id, yieldInputsTable[a.id]);
+                                }}
+                                disabled={savingYield}
+                                style={{
+                                  width: '80px', padding: '6px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
+                                  background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
+                                  fontWeight: 700
+                                }}
+                              />
+                              <button
+                                onClick={() => handleSaveYieldValue(a.id, yieldInputsTable[a.id])}
+                                disabled={savingYield}
+                                style={{
+                                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                                  background: 'var(--color-success)', color: '#fff', fontWeight: 600,
+                                  fontSize: '0.75rem', opacity: savingYield ? 0.6 : 1
+                                }}
+                              >
+                                {savingYield ? '⏳' : '✓'}
+                              </button>
+                            </div>
+                          ) : (
+                            <div
+                              onClick={() => {
+                                setEditingYield(a.id);
+                                setYieldInputsTable(p => ({ ...p, [a.id]: act || '' }));
+                              }}
+                              style={{
+                                cursor: editingYield === null ? 'pointer' : 'default',
+                                padding: '4px 8px', borderRadius: 4,
+                                background: 'transparent', transition: 'background 0.2s',
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                opacity: editingYield !== null && editingYield !== 'table' ? 0.6 : 1
+                              }}
+                              onMouseEnter={e => {
+                                if (editingYield === null || editingYield === 'table') {
+                                  e.currentTarget.style.background = 'var(--color-surface-2)';
+                                }
+                              }}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              title={editingYield === null ? 'Click to record yield' : ''}
+                            >
+                              {act ? Math.round(act).toLocaleString() : '—'}
+                              {editingYield === null && (
+                                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
+                              )}
+                            </div>
+                          )}
+                        </td>
                         <td style={{ fontWeight: 700, color: effColor }}>
                           {act === 0 ? '—' : `${eff.toFixed(1)}%`}
                         </td>
