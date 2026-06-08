@@ -2129,6 +2129,89 @@ function ReportTab() {
   );
 }
 
+/* ── Tab: Estates Management ──────────────────────────────────── */
+function EstatesTab() {
+  const { token, canWrite, isManager } = useAuth();
+  const [estates, setEstates] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [editingEstate, setEditingEstate] = useState(null);
+  const [estateForm, setEstateForm] = useState({ name: '', region: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    setLoading(true);
+    apiService.getEstates(token).then(data => setEstates(data || [])).catch(e => setError(e.message)).finally(() => setLoading(false));
+  }, [token]);
+
+  const handleSaveEstate = async () => {
+    if (!estateForm.name || !estateForm.region) { setError('Name and region required'); return; }
+    setSaving(true);
+    try {
+      if (editingEstate && editingEstate !== 'new') {
+        await apiService.updateEstate(token, editingEstate.id, estateForm);
+      } else {
+        await apiService.createEstate(token, estateForm);
+      }
+      setEditingEstate(null); setEstateForm({ name: '', region: '' });
+      const updated = await apiService.getEstates(token);
+      setEstates(updated); setError('');
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
+
+  const handleDeleteEstate = async (estateId) => {
+    if (!confirm('Delete this estate? This will remove all blocks, employees, and plans.')) return;
+    try {
+      await apiService.deleteEstate(token, estateId);
+      const updated = await apiService.getEstates(token);
+      setEstates(updated);
+    } catch (e) { setError(e.message); }
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)' }}>
+        {(canWrite || isManager) && (
+          <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Estate</button>
+        )}
+      </div>
+
+      {error && <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 'var(--space-4)' }}>{error}</div>}
+
+      {editingEstate && (
+        <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
+          <div className="section-card-header"><div className="section-card-title">{editingEstate === 'new' ? 'Create Estate' : 'Edit Estate'}</div></div>
+          <div className="section-card-body">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
+              <input type="text" placeholder="Estate Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+              <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button onClick={handleSaveEstate} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <div className="table-header-bar"><div><div className="table-title">Plantations</div><div className="table-subtitle">{estates.length} estates</div></div></div>
+        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div> : estates.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No estates</div> : (
+          <table>
+            <thead><tr><th>Name</th><th>Region</th><th>Blocks</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
+            <tbody>{estates.map(e => (
+              <tr key={e.id}><td style={{ fontWeight: 600 }}>{e.name}</td><td>{e.region || '—'}</td><td>{e.block_count || e.total_blocks || 0}</td>
+              {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteEstate(e.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+      </div>
+    </>
+  );
+}
+
 /* ── Nav Items Config ─────────────────────────────────────────────────── */
 /* ── Tab: Blocks Management ───────────────────────────────────── */
 function BlocksTab() {
@@ -2233,6 +2316,7 @@ function BlocksTab() {
 
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
+  { id: 'estates',     icon: '🏗️', label: 'Estates Management' },
   { id: 'blocks',      icon: '🏘️', label: 'Blocks Management' },
   { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
@@ -2244,6 +2328,7 @@ const navItems = [
 
 const tabTitles = {
   overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
+  estates:    { title: 'Estates Management',  sub: 'Create, update and manage all estates' },
   blocks:     { title: 'Blocks Management',  sub: 'View, add, edit and manage all plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
@@ -2358,6 +2443,7 @@ export default function DashboardPage() {
           </div>
 
           {activeTab === 'overview'    && <OverviewTab />}
+          {activeTab === 'estates'     && <EstatesTab />}
           {activeTab === 'blocks'      && <BlocksTab />}
           {activeTab === 'roi'         && <ROITab />}
           {activeTab === 'water'       && <WaterTab />}
