@@ -102,6 +102,87 @@ def _proportional_workers(block_ids, predictions, total_employees,
     return {bid: fixed[bid] + prop[bid] for bid in block_strs}
 
 
+def _snapshot_assignment_members(cur, plan_id):
+    """Record which specific employees fill each block for this plan's month.
+
+    Reconciles the per-block headcount (block_assignment.allocated_workers) with
+    named individuals under the flexible-pool model:
+      * Supervisors stay anchored to their group's block this month.
+      * Every other active employee forms a pool, distributed across blocks in a
+        deterministic order to fill each block's remaining headcount exactly.
+
+    Result: COUNT(block_assignment_member) per block == allocated_workers, and
+    each employee appears on exactly one block for the month.  Idempotent — it
+    clears any existing snapshot for the plan first.  Returns rows inserted.
+    """
+    cur.execute("SELECT estate_id FROM labour_plan WHERE id = %s", (plan_id,))
+    row = cur.fetchone()
+    if not row:
+        return 0
+    estate_id = row[0]
+
+    # Primary assignments carry the headcount (doubled-up coverage rows are 0)
+    cur.execute(
+        """SELECT id, block_id, worker_group_id, allocated_workers
+           FROM block_assignment
+           WHERE labour_plan_id = %s AND allocated_workers > 0
+           ORDER BY block_id""",
+        (plan_id,),
+    )
+    primaries = cur.fetchall()
+    if not primaries:
+        return 0
+
+    group_ids = [r[2] for r in primaries if r[2] is not None]
+
+    # Supervisors anchored to each block via the group covering it this month
+    sups_by_group, anchored_sup_ids = {}, set()
+    if group_ids:
+        cur.execute(
+            """SELECT wgm.group_id, e.id, e.skill_type
+               FROM worker_group_member wgm
+               JOIN employee e ON e.id = wgm.employee_id
+               WHERE wgm.is_active = TRUE AND e.is_active = TRUE
+                 AND e.skill_type = 'supervisor'
+                 AND wgm.group_id = ANY(%s)""",
+            (group_ids,),
+        )
+        for gid, eid, skill in cur.fetchall():
+            sups_by_group.setdefault(gid, []).append((eid, skill))
+            anchored_sup_ids.add(eid)
+
+    # Pool = every other active employee, deterministic order
+    cur.execute(
+        """SELECT id, skill_type FROM employee
+           WHERE estate_id = %s AND is_active = TRUE
+           ORDER BY employee_code, id""",
+        (estate_id,),
+    )
+    pool = [(eid, skill) for (eid, skill) in cur.fetchall()
+            if eid not in anchored_sup_ids]
+
+    # Fresh snapshot for this plan
+    cur.execute("DELETE FROM block_assignment_member WHERE labour_plan_id = %s",
+                (plan_id,))
+
+    inserted, idx = 0, 0
+    for ba_id, block_id, group_id, alloc in primaries:
+        members = list(sups_by_group.get(group_id, []))      # anchored supervisors
+        need = max(0, (alloc or 0) - len(members))
+        members += pool[idx:idx + need]
+        idx += need
+        for eid, skill in members:
+            cur.execute(
+                """INSERT INTO block_assignment_member
+                       (block_assignment_id, labour_plan_id, employee_id, skill_type)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (labour_plan_id, employee_id) DO NOTHING""",
+                (ba_id, plan_id, eid, skill),
+            )
+            inserted += 1
+    return inserted
+
+
 def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
                           status='published', notes=None):
     """Create one estate's monthly labour plan and return a summary dict.
@@ -261,6 +342,10 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
              cycle_id, current_round, expected, alloc, note),
         )
 
+    # 9b. Snapshot the individual employees behind each block's headcount, so
+    #     "who was in this group this month" stays queryable forever.
+    members_snapshot = _snapshot_assignment_members(cur, plan_id)
+
     # 10. Link this month's predictions to the plan
     cur.execute(
         """UPDATE yield_prediction SET labour_plan_id = %s
@@ -290,6 +375,7 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
         'ungrouped_employees':  ungrouped,
         'worker_distribution':  {str(k): v for k, v in block_worker_alloc.items()},
         'supervisors_anchored': {str(k): v for k, v in supervisor_per_block.items()},
+        'members_snapshotted':  members_snapshot,
     }
 
 
@@ -475,6 +561,120 @@ def get_plan(plan_id):
             """, (plan['period_start'], plan['period_start'], plan_id))
             plan['assignments'] = _rows(cur)
         return jsonify(plan), 200
+    except Exception as e:
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/plans/<plan_id>/members', methods=['GET'])
+@token_required
+def get_plan_members(plan_id):
+    """GET /api/labour/plans/<plan_id>/members  ?group_code=  &block_code=
+
+    Returns the snapshot of which specific employees worked each block/group for
+    this plan's month — the answer to "who was in group X that month".
+    """
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT b.block_code, wg.group_code, wg.group_name,
+                       e.id AS employee_id, e.employee_code, e.full_name,
+                       bam.skill_type, ba.rotation_round
+                FROM block_assignment_member bam
+                JOIN block_assignment ba ON ba.id = bam.block_assignment_id
+                JOIN block b             ON b.id  = ba.block_id
+                LEFT JOIN worker_group wg ON wg.id = ba.worker_group_id
+                JOIN employee e          ON e.id  = bam.employee_id
+                WHERE bam.labour_plan_id = %s
+            """
+            params = [plan_id]
+            if request.args.get('group_code'):
+                sql += " AND wg.group_code = %s"; params.append(request.args['group_code'])
+            if request.args.get('block_code'):
+                sql += " AND b.block_code = %s"; params.append(request.args['block_code'])
+            sql += " ORDER BY b.block_code, e.skill_type DESC, e.employee_code"
+            cur.execute(sql, params)
+            rows = _rows(cur)
+
+        # Group the flat rows by block/group for convenient consumption
+        groups = {}
+        for r in rows:
+            key = r['block_code']
+            g = groups.setdefault(key, {
+                'block_code': r['block_code'],
+                'group_code': r['group_code'],
+                'group_name': r['group_name'],
+                'rotation_round': r['rotation_round'],
+                'members': [],
+            })
+            g['members'].append({
+                'employee_id':   r['employee_id'],
+                'employee_code': r['employee_code'],
+                'full_name':     r['full_name'],
+                'skill_type':    r['skill_type'],
+            })
+        return jsonify({
+            'plan_id': plan_id,
+            'total_members': len(rows),
+            'blocks': list(groups.values()),
+        }), 200
+    except Exception as e:
+        return _db_err(e)
+    finally:
+        conn.close()
+
+
+@labour_bp.route('/rotation/members', methods=['GET'])
+@token_required
+def get_rotation_members():
+    """GET /api/labour/rotation/members  ?estate_id=&round=&group_code=
+
+    Returns the people assigned to a group for a given rotation round (= month).
+    Used by the rotation view: click a group cell → see who was assigned.
+    """
+    estate_id, err = effective_estate_id(request.args.get('estate_id'))
+    if err:
+        return err
+    round_no   = request.args.get('round')
+    group_code = request.args.get('group_code')
+    if not round_no:
+        return jsonify({'error': 'round is required'}), 400
+
+    conn = _db()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT e.id AS employee_id, e.employee_code, e.full_name,
+                       bam.skill_type, b.block_code, wg.group_code, wg.group_name,
+                       lp.period_start
+                FROM block_assignment_member bam
+                JOIN block_assignment ba ON ba.id = bam.block_assignment_id
+                JOIN labour_plan lp      ON lp.id = bam.labour_plan_id
+                JOIN block b             ON b.id  = ba.block_id
+                LEFT JOIN worker_group wg ON wg.id = ba.worker_group_id
+                JOIN employee e          ON e.id  = bam.employee_id
+                WHERE lp.estate_id = %s AND ba.rotation_round = %s
+            """
+            params = [estate_id, int(round_no)]
+            if group_code:
+                sql += " AND wg.group_code = %s"; params.append(group_code)
+            sql += " ORDER BY (e.skill_type = 'supervisor') DESC, e.employee_code"
+            cur.execute(sql, params)
+            rows = _rows(cur)
+        return jsonify({
+            'round': int(round_no),
+            'group_code': group_code,
+            'period_start': rows[0]['period_start'] if rows else None,
+            'block_code': rows[0]['block_code'] if rows else None,
+            'count': len(rows),
+            'members': rows,
+        }), 200
     except Exception as e:
         return _db_err(e)
     finally:
@@ -1489,6 +1689,7 @@ def create_manual_plan():
 
             # Create assignments (group_id may be None for unassigned blocks)
             created_count = 0
+            block_ids, predictions, group_by_block = [], {}, {}
             for assign in assignments_data:
                 block_id = assign.get('block_id')
                 group_id = assign.get('worker_group_id') or None
@@ -1505,12 +1706,57 @@ def create_manual_plan():
                 """, (plan_id, block_id, group_id, expected_yield,
                       'Manual plan creation'))
                 created_count += 1
+                block_ids.append(block_id)
+                predictions[str(block_id)] = expected_yield
+                group_by_block[str(block_id)] = group_id
+
+            # Allocate workers yield-proportionally and snapshot who they are, so a
+            # manually-created plan records its group membership like the cron does.
+            members_snapshot = 0
+            if block_ids:
+                if not total_workers:
+                    cur.execute("SELECT COUNT(*) FROM employee "
+                                "WHERE estate_id = %s AND is_active = TRUE", (estate_id,))
+                    total_workers = cur.fetchone()[0] or 0
+
+                # Supervisors anchored per block via the assigned group
+                supervisor_per_block = {}
+                group_ids = list({g for g in group_by_block.values() if g})
+                if group_ids:
+                    cur.execute(
+                        """SELECT wgm.group_id, COUNT(*)
+                           FROM worker_group_member wgm
+                           JOIN employee e ON e.id = wgm.employee_id
+                           WHERE wgm.is_active = TRUE AND e.is_active = TRUE
+                             AND e.skill_type = 'supervisor'
+                             AND wgm.group_id = ANY(%s)
+                           GROUP BY wgm.group_id""",
+                        (group_ids,),
+                    )
+                    sup_by_group = {str(r[0]): r[1] for r in cur.fetchall()}
+                    for bid_str, gid in group_by_block.items():
+                        if gid:
+                            supervisor_per_block[bid_str] = sup_by_group.get(str(gid), 0)
+
+                alloc = _proportional_workers(
+                    block_ids, predictions, total_workers,
+                    supervisor_per_block=supervisor_per_block)
+                for bid, n in alloc.items():
+                    cur.execute(
+                        "UPDATE block_assignment SET allocated_workers = %s "
+                        "WHERE labour_plan_id = %s AND block_id = %s",
+                        (n, plan_id, bid))
+
+                cur.execute("UPDATE labour_plan SET total_workers = %s WHERE id = %s",
+                            (total_workers, plan_id))
+                members_snapshot = _snapshot_assignment_members(cur, plan_id)
 
             conn.commit()
         return jsonify({
             'plan_id': plan_id,
             'period_start': period_start.isoformat(),
             'assignments_created': created_count,
+            'members_snapshotted': members_snapshot,
             'message': 'Manual plan created successfully'
         }), 201
     except Exception as e:

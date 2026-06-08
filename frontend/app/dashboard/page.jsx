@@ -863,6 +863,22 @@ function LabourTab() {
   const [yieldInputsTable, setYieldInputsTable] = useState({});  // { assignmentId: value }
   const [savingYield, setSavingYield]     = useState(false);
 
+  // Group members modal (rotation view: click a group → see assigned people that month)
+  const [groupMembers, setGroupMembers] = useState(null);  // null = closed
+  const openGroupMembers = async (round, groupCode) => {
+    setGroupMembers({ round, group_code: groupCode, loading: true, members: [] });
+    try {
+      const data = await apiService.getRotationMembers(token, estateId, round, groupCode);
+      setGroupMembers({
+        round, group_code: groupCode,
+        block_code: data.block_code, period_start: data.period_start,
+        members: data.members || [], loading: false,
+      });
+    } catch (e) {
+      setGroupMembers({ round, group_code: groupCode, members: [], loading: false, error: e.message });
+    }
+  };
+
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
   const [empForm, setEmpForm]       = useState({
@@ -1653,7 +1669,7 @@ function LabourTab() {
       {/* ── VIEW: Rotation Matrix ── */}
       {!loading && view === 'rotation' && (
         rotation ? (
-          <div className="table-wrap">
+          <div className="table-wrap" style={{ overflowX: 'auto' }}>
             <div className="table-header-bar">
               <div>
                 <div className="table-title">{rotation.cycle_name}</div>
@@ -1674,18 +1690,18 @@ function LabourTab() {
                               : rn === rotation.current_round ? 'var(--color-primary)'
                               : 'var(--color-surface-2)',
                     transition: 'background 0.3s',
-                  }} title={`Round ${rn}${rn === rotation.current_round ? ' ← current' : ''}`} />
+                  }} title={`${roundToMonth(rn)}${rn === rotation.current_round ? ' ← current' : ''}`} />
                 ))}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                {rotation.rounds_executed ?? rotation.total_rounds} of {rotation.total_rounds} rounds completed — {Math.round(((rotation.rounds_executed ?? rotation.total_rounds) / rotation.total_rounds) * 100)}% through cycle
+                {roundToMonth(rotation.current_round)} — {Math.round(((rotation.rounds_executed ?? rotation.total_rounds) / rotation.total_rounds) * 100)}% through cycle
               </div>
             </div>
 
-            <table>
+            <table style={{ minWidth: 'max-content', width: '100%' }}>
               <thead>
                 <tr>
-                  <SortHeader label="Round" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
+                  <SortHeader label="Month" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
                   {(rotation.matrix[1] || []).map(b => <th key={b.block_code}>{b.block_code}</th>)}
                 </tr>
               </thead>
@@ -1701,7 +1717,7 @@ function LabourTab() {
                       background: isCurrent ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
                     }}>
                       <td style={{ fontWeight: 700 }}>
-                        Round {rn}
+                        {roundToMonth(rn)}
                         {isCurrent && (
                           <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
                         )}
@@ -1709,20 +1725,28 @@ function LabourTab() {
                       {cells.map(c => {
                         const actual = actualByBlock?.[c.block_code];
                         const changed = actual && actual.group_code !== c.group_code;
+                        const groupCode = (actual ? actual.group_code : c.group_code) || c.group_code;
+                        const workers = actual
+                          ? (actual.allocated_workers ?? actual.group_capacity ?? c.capacity)
+                          : c.capacity;
                         return (
                           <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                            {actual ? (
-                              <>
-                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
-                                  {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
+                            {groupCode ? (
+                              <button
+                                onClick={() => openGroupMembers(parseInt(rn), groupCode)}
+                                title={`View people assigned to ${groupCode} in ${roundToMonth(rn)}`}
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  textAlign: 'left', font: 'inherit', color: 'inherit', width: '100%',
+                                }}
+                              >
+                                <div style={{ fontWeight: 600, color: 'var(--color-primary)', textDecoration: 'underline dotted', textUnderlineOffset: 2 }}>
+                                  {groupCode}
                                 </div>
-                                <div style={{ fontSize: '0.7rem' }}>{actual.allocated_workers ?? actual.group_capacity ?? c.capacity} workers</div>
-                              </>
+                                <div style={{ fontSize: '0.7rem' }}>{workers} workers</div>
+                              </button>
                             ) : (
-                              <>
-                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
-                                <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
-                              </>
+                              <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>
                             )}
                           </td>
                         );
@@ -2177,6 +2201,75 @@ function LabourTab() {
                 {planCreateLoading ? (plan ? 'Adding…' : 'Creating…') : (plan ? 'Add Blocks' : 'Create Plan')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Group Members Modal (rotation view: who was assigned to a group that month) ── */}
+      {groupMembers && (
+        <div
+          onClick={() => setGroupMembers(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--color-surface)', borderRadius: 16, padding: 28,
+              width: '100%', maxWidth: 520, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+              maxHeight: '85vh', overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                  {groupMembers.group_code} — {roundToMonth(groupMembers.round)}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                  {groupMembers.block_code ? `Block ${groupMembers.block_code}` : ''}
+                  {groupMembers.loading ? '' : ` · ${groupMembers.members.length} people assigned`}
+                </div>
+              </div>
+              <button
+                onClick={() => setGroupMembers(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--color-text-muted)', lineHeight: 1 }}
+              >×</button>
+            </div>
+
+            {groupMembers.loading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+            ) : groupMembers.error ? (
+              <div style={{ padding: 16, color: 'var(--color-danger)' }}>{groupMembers.error}</div>
+            ) : groupMembers.members.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                No snapshot recorded for this group/month.
+              </div>
+            ) : (
+              <table style={{ width: '100%', marginTop: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Code</th>
+                    <th style={{ textAlign: 'left' }}>Name</th>
+                    <th style={{ textAlign: 'left' }}>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupMembers.members.map(m => (
+                    <tr key={m.employee_id}>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{m.employee_code}</td>
+                      <td>{m.full_name}</td>
+                      <td>
+                        <span className={`badge ${m.skill_type === 'supervisor' ? 'badge-success' : 'badge-neutral'}`} style={{ fontSize: '0.65rem' }}>
+                          {m.skill_type}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -2977,6 +3070,13 @@ const tabTitles = {
   labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
   predictions: { title: 'Yield Predictions',  sub: 'ML model forecasts for each block & month' },
   reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
+};
+
+// Convert round number to month name (round 1 = Jan, round 2 = Feb, etc.)
+const roundToMonth = (roundNumber) => {
+  const months = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+  return months[roundNumber] || `Round ${roundNumber}`;
 };
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
