@@ -10,7 +10,11 @@ __pycache__/
 
 # Env
 .env
+.env.local
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude
+CLAUDE.md

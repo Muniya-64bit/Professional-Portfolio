@@ -14,6 +14,7 @@ from auth import (
 from labour import labour_bp
 from water import water_bp
 from reports import reports_bp
+from fertilizer import fertilizer_bp
 from scheduler import start_scheduler
 
 # Configure logging
@@ -28,6 +29,7 @@ CORS(app)
 app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
 app.register_blueprint(reports_bp)
+app.register_blueprint(fertilizer_bp)
 
 # Start the monthly labour-plan scheduler under a WSGI server (gunicorn imports
 # this module as 'app'). For the `python app.py` dev runner it is started in the

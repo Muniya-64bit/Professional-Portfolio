@@ -22,19 +22,6 @@ const estates = [
 //   { month: 'Jun', intensity: 4.1, target: 4.4 },
 // ];
 
-const fertilizerBlocks = [
-  { block: 'A1', estate: 'Kelani Valley', daysSince: 28, recommended: 'Urea 25kg', status: 'due' },
-  { block: 'A2', estate: 'Kelani Valley', daysSince: 52, recommended: 'NPK 20kg',  status: 'overdue' },
-  { block: 'A3', estate: 'Kelani Valley', daysSince: 12, recommended: 'MOP 15kg',  status: 'ok' },
-  { block: 'B1', estate: 'Nuwara Eliya',  daysSince: 61, recommended: 'Urea 30kg', status: 'overdue' },
-  { block: 'B2', estate: 'Nuwara Eliya',  daysSince: 5,  recommended: 'NPK 25kg',  status: 'ok' },
-  { block: 'B3', estate: 'Nuwara Eliya',  daysSince: 33, recommended: 'Urea 20kg', status: 'due' },
-  { block: 'C1', estate: 'Uva Highlands', daysSince: 44, recommended: 'NPK 20kg',  status: 'due' },
-  { block: 'C2', estate: 'Uva Highlands', daysSince: 8,  recommended: 'MOP 18kg',  status: 'ok' },
-  { block: 'D1', estate: 'Ratnapura',     daysSince: 70, recommended: 'Urea 35kg', status: 'overdue' },
-  { block: 'D2', estate: 'Ratnapura',     daysSince: 18, recommended: 'NPK 22kg',  status: 'ok' },
-  { block: 'D3', estate: 'Ratnapura',     daysSince: 38, recommended: 'Urea 28kg', status: 'due' },
-];
 
 const labourData = [
   { block: 'A1', estate: 'Kelani Valley', workers: 14, target: 550, actual: 532, efficiency: 96.7 },
@@ -110,10 +97,24 @@ function StatusBadge({ status }) {
 
 /* ── Tab: Overview ────────────────────────────────────────────────────── */
 function OverviewTab() {
+  const { token } = useAuth();
   const totalProd = labourData.reduce((s, r) => s + r.actual, 0);
   const avgCost = Math.round(estates.reduce((s, e) => s + e.costPerKg, 0) / estates.length);
   const activeWorkers = labourData.reduce((s, r) => s + r.workers, 0);
   const avgWater = 'N/A';
+  const [fertAlerts, setFertAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getFertilizerAlerts(token).catch(() => []).then(data => setFertAlerts(Array.isArray(data) ? data : []));
+  }, [token]);
+
+  const fertOverdue = fertAlerts.filter(a => a.status === 'overdue');
+  const fertDue = fertAlerts.filter(a => a.status === 'due');
+  const fertAttention = [...fertOverdue, ...fertDue];
+
+  const fertStatusMap = { pending: 'ok', due: 'due', overdue: 'overdue' };
+
   return (
     <>
       {/* KPI Cards */}
@@ -185,29 +186,53 @@ function OverviewTab() {
             <div className="section-card-title-icon">🌱</div>
             Fertilizer Alerts
           </div>
-          <span className="badge badge-danger">
-            {fertilizerBlocks.filter(b => b.status === 'overdue').length} Overdue
-          </span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {fertOverdue.length > 0 && <span className="badge badge-danger">{fertOverdue.length} Overdue</span>}
+            {fertDue.length > 0 && <span className="badge badge-warning">{fertDue.length} Due</span>}
+            {fertAttention.length === 0 && fertAlerts.length > 0 && <span className="badge badge-success">All Clear</span>}
+          </div>
         </div>
         <div className="section-card-body">
-          <div className="alert alert-warning" style={{ marginBottom: 'var(--space-4)' }}>
-            <span>⚠️</span>
-            <span><strong>{fertilizerBlocks.filter(b => b.status === 'overdue').length} blocks</strong> are overdue for fertilizer application. Immediate action recommended.</span>
-          </div>
-          <div className="block-grid">
-            {fertilizerBlocks.filter(b => b.status !== 'ok').map(b => (
-              <div key={b.block} className={`block-card status-${b.status}`}>
-                <div className="block-name">{b.block}</div>
-                <div className="block-estate">{b.estate}</div>
-                <div className="block-days">{b.daysSince}</div>
-                <div className="block-days-label">days since last</div>
-                <StatusBadge status={b.status} />
-                <div style={{ marginTop: 'var(--space-3)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                  Rec: {b.recommended}
-                </div>
-              </div>
-            ))}
-          </div>
+          {fertAttention.length === 0 ? (
+            <p style={{ padding: '0.5rem 0', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+              {fertAlerts.length > 0 ? 'No overdue or due blocks — all on schedule.' : 'No schedule data yet. Generate a plan in the Fertilizer Rotation tab.'}
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {fertAttention.map(a => {
+                const isOverdue = a.status === 'overdue';
+                const accentColor = isOverdue ? 'var(--color-danger)' : 'var(--color-warning)';
+                const bgColor = isOverdue ? 'rgba(220,38,38,0.04)' : 'rgba(245,158,11,0.04)';
+                const days = Math.abs(a.days_overdue ?? 0);
+                return (
+                  <div key={a.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: bgColor,
+                    border: `1px solid ${isOverdue ? 'rgba(220,38,38,0.15)' : 'rgba(245,158,11,0.15)'}`,
+                    borderLeft: `3px solid ${accentColor}`,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text)' }}>{a.block_code}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{a.estate}</span>
+                      </div>
+                      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                        {a.fertilizer}{a.total_kg_needed ? ` · ${Number(a.total_kg_needed).toFixed(0)} kg needed` : ''}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: accentColor }}>
+                        {isOverdue ? `${days} days overdue` : days === 0 ? 'Due' : `Due in ${days} days`}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{a.due_date}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -407,53 +432,196 @@ function WaterTab() {
 
 /* ── Tab: Fertilizer ──────────────────────────────────────────────────── */
 function FertilizerTab() {
-  const overdueCount = fertilizerBlocks.filter(b => b.status === 'overdue').length;
-  const dueCount = fertilizerBlocks.filter(b => b.status === 'due').length;
+  const { token, canWrite } = useAuth();
+  const [estates, setEstates] = useState([]);
+  const [estateId, setEstateId] = useState('');
+  const [alerts, setAlerts] = useState([]);
+  const [schedule, setSchedule] = useState([]);
+  const [scheduleStatus, setScheduleStatus] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+  const [genResult, setGenResult] = useState(null);
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getEstates(token)
+      .then(data => { setEstates(data); if (data.length > 0) setEstateId(data[0].id); })
+      .catch(() => {});
+  }, [token]);
+
+  useEffect(() => {
+    if (!token || !estateId) return;
+    setLoading(true);
+    setError('');
+    Promise.all([
+      apiService.getFertilizerAlerts(token, estateId),
+      apiService.getFertilizerSchedule(token, { estateId, status: scheduleStatus }),
+    ])
+      .then(([a, s]) => { setAlerts(Array.isArray(a) ? a : []); setSchedule(Array.isArray(s) ? s : []); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [token, estateId, scheduleStatus]);
+
+  const reload = async () => {
+    const [a, s] = await Promise.all([
+      apiService.getFertilizerAlerts(token, estateId),
+      apiService.getFertilizerSchedule(token, { estateId, status: scheduleStatus }),
+    ]);
+    setAlerts(Array.isArray(a) ? a : []);
+    setSchedule(Array.isArray(s) ? s : []);
+  };
+
+  const handleGenerate = async () => {
+    if (!estateId) return;
+    setGenerating(true); setError(''); setGenResult(null);
+    try {
+      const result = await apiService.generateFertilizerSchedule(token, estateId);
+      setGenResult(result);
+      await reload();
+    } catch (e) { setError(e.message); }
+    finally { setGenerating(false); }
+  };
+
+  const handleUpdateEntry = async (id, status) => {
+    try {
+      await apiService.updateFertilizerScheduleEntry(token, id, { status });
+      await reload();
+    } catch (e) { setError(e.message); }
+  };
+
+  const overdueCount = alerts.filter(a => a.status === 'overdue').length;
+  const dueCount = alerts.filter(a => a.status === 'due').length;
+  const pendingCount = alerts.filter(a => a.status === 'pending').length;
+
+  const statusBadge = { pending: 'badge-neutral', due: 'badge-warning', overdue: 'badge-danger', done: 'badge-success', skipped: 'badge-neutral' };
+  const statusLabel = { pending: 'Pending', due: 'Due', overdue: 'Overdue', done: 'Done', skipped: 'Skipped' };
+
   return (
     <>
-      <div className="kpi-grid">
-        <KpiCard icon="🌱" iconBg="kpi-icon-green" label="Total Blocks Tracked" value={fertilizerBlocks.length} unit="" />
-        <KpiCard icon="✅" iconBg="kpi-icon-green" label="OK — No Action"   value={fertilizerBlocks.filter(b => b.status === 'ok').length} unit="" />
-        <KpiCard icon="⚠️" iconBg="kpi-icon-amber" label="Due This Week"    value={dueCount}    unit="" />
-        <KpiCard icon="🚨" iconBg="kpi-icon-amber" label="Overdue"          value={overdueCount} unit="" delta={overdueCount > 0 ? overdueCount : undefined} />
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estate</div>
+          <select value={estateId} onChange={e => { setEstateId(e.target.value); setGenResult(null); }} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+            {estates.length === 0 && <option value="">Loading…</option>}
+            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+        {canWrite && (
+          <button
+            onClick={handleGenerate}
+            disabled={generating || !estateId}
+            style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}
+          >
+            {generating ? 'Generating…' : '⚡ Generate Schedule'}
+          </button>
+        )}
       </div>
 
-      {overdueCount > 0 && (
-        <div className="alert alert-danger" style={{ marginBottom: 'var(--space-6)' }}>
-          <span>🚨</span>
-          <span><strong>{overdueCount} blocks</strong> are overdue for fertilizer application. Delays can reduce yield and soil quality. Apply immediately.</span>
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
         </div>
       )}
 
-      <div className="section-card">
-        <div className="section-card-header">
-          <div className="section-card-title">
-            <div className="section-card-title-icon">🌱</div>
-            Block Rotation Status
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <span className="badge badge-success">OK</span>
-            <span className="badge badge-warning">Due</span>
-            <span className="badge badge-danger">Overdue</span>
-          </div>
+      {genResult && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,0.08)', color: 'var(--color-success)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(22,163,74,0.2)' }}>
+          Schedule generated: <strong>{genResult.inserted}</strong> new entries · {genResult.skipped_existing} already open · {genResult.skipped_recent} applied recently
         </div>
-        <div className="section-card-body">
-          <div className="block-grid">
-            {fertilizerBlocks.map(b => (
-              <div key={b.block} className={`block-card status-${b.status}`}>
-                <div className="block-name">{b.block}</div>
-                <div className="block-estate">{b.estate}</div>
-                <div className="block-days">{b.daysSince}</div>
-                <div className="block-days-label">days since last</div>
-                <StatusBadge status={b.status} />
-                <div style={{ marginTop: 'var(--space-3)', fontSize: '0.75rem', color: 'var(--color-primary-light)', fontWeight: 600 }}>
-                  → {b.recommended}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      )}
+
+      {/* KPI cards */}
+      <div className="kpi-grid">
+        <KpiCard icon="🚨" iconBg="kpi-icon-amber" label="Overdue"   value={overdueCount} unit="" />
+        <KpiCard icon="⚠️" iconBg="kpi-icon-amber" label="Due Now"   value={dueCount}     unit="" />
+        <KpiCard icon="📅" iconBg="kpi-icon-blue"  label="Pending"   value={pendingCount} unit="" />
+        <KpiCard icon="🌱" iconBg="kpi-icon-green" label="All Alerts" value={alerts.length} unit="" />
       </div>
+
+      {overdueCount > 0 && !loading && (
+        <div className="alert alert-danger" style={{ marginBottom: 'var(--space-6)' }}>
+          <span>🚨</span>
+          <span><strong>{overdueCount} block{overdueCount !== 1 ? 's' : ''}</strong> overdue for fertilizer application. Delays reduce yield and soil health.</span>
+        </div>
+      )}
+
+      {loading && <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading fertilizer data…</div>}
+
+      {/* Schedule table */}
+      <div className="table-wrap">
+        <div className="table-header-bar">
+          <div>
+            <div className="table-title">Schedule</div>
+            <div className="table-subtitle">Block-level fertilizer schedule</div>
+          </div>
+          <select
+            value={scheduleStatus}
+            onChange={e => setScheduleStatus(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem' }}
+          >
+            <option value="due,overdue">Due &amp; Overdue</option>
+            <option value="pending">Pending</option>
+            <option value="done">Done</option>
+            <option value="skipped">Skipped</option>
+            <option value="">All</option>
+          </select>
+        </div>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+        ) : schedule.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+            No entries for this filter.
+            {canWrite && <span> Click <strong>Generate Schedule</strong> to create entries.</span>}
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Fertilizer</th>
+                <th>Due Date</th>
+                <th>Status</th>
+                <th>Rate kg/ha</th>
+                <th>Total Kg</th>
+                {canWrite && <th>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {schedule.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.block_code}</td>
+                  <td>{s.fertilizer_code || '—'}</td>
+                  <td style={{ fontSize: '0.8125rem' }}>{s.due_date}</td>
+                  <td><span className={`badge ${statusBadge[s.status] || 'badge-neutral'}`}>{statusLabel[s.status] || s.status}</span></td>
+                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{s.scheduled_rate_kg_per_ha ? `${s.scheduled_rate_kg_per_ha} kg/ha` : '—'}</td>
+                  <td style={{ fontWeight: 600 }}>{s.total_kg_needed ? `${Number(s.total_kg_needed).toFixed(0)} kg` : '—'}</td>
+                  {canWrite && (
+                    <td>
+                      {(s.status === 'due' || s.status === 'overdue' || s.status === 'pending') && (
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => handleUpdateEntry(s.id, 'done')} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--color-success)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Done</button>
+                          <button onClick={() => handleUpdateEntry(s.id, 'skipped')} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Skip</button>
+                        </div>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {!loading && alerts.length === 0 && schedule.length === 0 && !error && (
+        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)', marginTop: 'var(--space-6)' }}>
+          <div style={{ fontSize: '2rem', marginBottom: 10 }}>🌱</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>No fertilizer data for this estate</div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+            {canWrite ? 'Click Generate Schedule to create a fertilizer plan.' : 'No schedule has been generated yet.'}
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -2251,9 +2419,17 @@ const tabTitles = {
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, loading, logout } = useAuth();
+  const { user, isAuthenticated, loading, logout, token } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
+  const [fertOverdueCount, setFertOverdueCount] = useState(0);
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getFertilizerAlerts(token)
+      .then(data => setFertOverdueCount(Array.isArray(data) ? data.filter(a => a.status === 'overdue').length : 0))
+      .catch(() => {});
+  }, [token]);
 
   useEffect(() => {
     // Wait until auth has finished restoring/verifying the stored token
@@ -2300,10 +2476,8 @@ export default function DashboardPage() {
             >
               <span className="dash-nav-icon">{item.icon}</span>
               {item.label}
-              {item.id === 'fertilizer' && (
-                <span className="dash-nav-badge">
-                  {fertilizerBlocks.filter(b => b.status === 'overdue').length}
-                </span>
+              {item.id === 'fertilizer' && fertOverdueCount > 0 && (
+                <span className="dash-nav-badge">{fertOverdueCount}</span>
               )}
             </button>
           ))}
