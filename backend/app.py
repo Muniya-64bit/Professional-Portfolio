@@ -12,16 +12,22 @@ from auth import (
     verify_token, validate_password_strength, rate_limit
 )
 from labour import labour_bp
-from water import water_bp 
+from water import water_bp
+from roi import roi_bp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, 
+     origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
+app.register_blueprint(roi_bp)
 
 # Basic routes
 @app.route("/", methods=["GET"])
