@@ -480,6 +480,7 @@ function LabourTab() {
   // Target editing state
   const [editingTarget, setEditingTarget] = useState(null); // assignment id being edited
   const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
+  const [savingTarget, setSavingTarget]   = useState(false);
 
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
@@ -665,6 +666,26 @@ function LabourTab() {
       setYieldError(e.message);
     } finally {
       setYieldSaving(false);
+    }
+  };
+
+  const handleSaveTargetValue = async (assignmentId, newValue) => {
+    if (!newValue || newValue <= 0) {
+      setEditingTarget(null);
+      return;
+    }
+    setSavingTarget(true);
+    try {
+      await apiService.overrideAssignment(token, assignmentId, { expected_yield_kg: parseFloat(newValue) });
+      // Reload plan to reflect updated targets
+      const updated = await apiService.getLabourPlan(token, plan.id);
+      setPlan(updated);
+      setEditingTarget(null);
+    } catch (e) {
+      console.error('Error saving target:', e);
+      setEditingTarget(null);
+    } finally {
+      setSavingTarget(false);
     }
   };
 
@@ -888,33 +909,66 @@ function LabourTab() {
                         </td>
                         <td style={{ fontWeight: 700 }}>
                           {editingTarget === a.id ? (
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={targetInputs[a.id] ?? exp}
-                              onChange={e => setTargetInputs(p => ({ ...p, [a.id]: parseFloat(e.target.value) || 0 }))}
-                              onBlur={() => setEditingTarget(null)}
-                              onKeyDown={e => e.key === 'Enter' && setEditingTarget(null)}
-                              autoFocus
-                              style={{
-                                width: '100%', padding: '4px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
-                                background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
-                                fontWeight: 700
-                              }}
-                            />
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={targetInputs[a.id] ?? exp}
+                                onChange={e => setTargetInputs(p => ({ ...p, [a.id]: e.target.value }))}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') handleSaveTargetValue(a.id, targetInputs[a.id]);
+                                  if (e.key === 'Escape') setEditingTarget(null);
+                                }}
+                                autoFocus
+                                disabled={savingTarget}
+                                style={{
+                                  width: '80px', padding: '6px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
+                                  background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
+                                  fontWeight: 700
+                                }}
+                              />
+                              <button
+                                onClick={() => handleSaveTargetValue(a.id, targetInputs[a.id])}
+                                disabled={savingTarget}
+                                style={{
+                                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                                  background: 'var(--color-success)', color: '#fff', fontWeight: 600,
+                                  fontSize: '0.75rem', opacity: savingTarget ? 0.6 : 1
+                                }}
+                              >
+                                {savingTarget ? '⏳' : '✓'}
+                              </button>
+                              <button
+                                onClick={() => setEditingTarget(null)}
+                                disabled={savingTarget}
+                                style={{
+                                  padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)',
+                                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer',
+                                  fontSize: '0.75rem', opacity: savingTarget ? 0.6 : 1
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
                           ) : (
-                            <span
+                            <div
                               onClick={() => {
                                 setEditingTarget(a.id);
                                 setTargetInputs(p => ({ ...p, [a.id]: exp }));
                               }}
-                              style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: 4,
-                                       hover: { background: 'var(--color-surface-2)' } }}
-                              title="Click to edit"
+                              style={{
+                                cursor: 'pointer', padding: '4px 8px', borderRadius: 4,
+                                background: 'transparent', transition: 'background 0.2s',
+                                display: 'flex', alignItems: 'center', gap: 8
+                              }}
+                              onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface-2)'}
+                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              title="Click to edit target value"
                             >
                               {exp ? Math.round(exp).toLocaleString() : '—'}
-                            </span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
+                            </div>
                           )}
                         </td>
                         <td style={{ fontWeight: 700 }}>{act ? Math.round(act).toLocaleString() : '—'}</td>
