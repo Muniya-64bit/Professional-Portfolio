@@ -151,3 +151,58 @@ def get_water_estates():
         })
 
     return jsonify(result), 200
+
+# ── POST /api/water/usage ────────────────────────────────────────────────
+@water_bp.route('/api/water/usage', methods=['POST'])
+@token_required
+def add_water_usage():
+    data       = request.get_json()
+    factory_id = data.get('factory_id')
+    year       = data.get('year')
+    month      = data.get('month')
+    water_m3   = data.get('water_m3')
+    yield_kg   = data.get('yield_kg')
+    status     = data.get('track_status', 'on_track')
+
+    if not all([factory_id, year, month, water_m3, yield_kg]):
+        return jsonify({'error': 'factory_id, year, month, water_m3, yield_kg are required'}), 400
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        INSERT INTO water_usage (factory_id, year, month, water_m3, yield_kg, track_status)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (factory_id, year, month, water_m3, yield_kg, status))
+    new_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({'message': 'Water usage recorded', 'id': str(new_id)}), 201
+
+
+# ── PUT /api/water/usage/<id> ────────────────────────────────────────────
+@water_bp.route('/api/water/usage/<usage_id>', methods=['PUT'])
+@token_required
+def update_water_usage(usage_id):
+    data     = request.get_json()
+    water_m3 = data.get('water_m3')
+    yield_kg = data.get('yield_kg')
+    status   = data.get('track_status')
+
+    conn = get_db()
+    cur  = conn.cursor()
+    cur.execute("""
+        UPDATE water_usage
+        SET water_m3     = COALESCE(%s, water_m3),
+            yield_kg     = COALESCE(%s, yield_kg),
+            track_status = COALESCE(%s, track_status),
+            updated_at   = NOW()
+        WHERE id = %s
+    """, (water_m3, yield_kg, status, usage_id))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({'message': 'Updated successfully'}), 200
