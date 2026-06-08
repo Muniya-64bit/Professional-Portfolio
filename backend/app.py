@@ -14,6 +14,7 @@ from auth import (
 from labour import labour_bp
 from water import water_bp
 from reports import reports_bp
+from roi import roi_bp
 from scheduler import start_scheduler
 
 # Configure logging
@@ -31,6 +32,8 @@ CORS(app,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
+app.register_blueprint(reports_bp)
+app.register_blueprint(roi_bp)
 
 # Basic routes
 @app.route("/", methods=["GET"])
