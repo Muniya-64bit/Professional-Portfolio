@@ -471,6 +471,12 @@ function LabourTab() {
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
 
+  // Search and sort state
+  const [empSearch, setEmpSearch]     = useState('');
+  const [empSort, setEmpSort]         = useState({ field: 'full_name', dir: 'asc' });
+  const [assignSort, setAssignSort]   = useState({ field: 'block_code', dir: 'asc' });
+  const [rotSort, setRotSort]         = useState({ field: 'round', dir: 'asc' });
+
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
   const [empForm, setEmpForm]       = useState({
@@ -594,8 +600,12 @@ function LabourTab() {
         });
       }
       setEmpModal(null);
-      const emps = await apiService.getEmployees(token, { estateId });
+      const [emps, grps] = await Promise.all([
+        apiService.getEmployees(token, { estateId }),
+        apiService.getWorkerGroups(token, estateId),
+      ]);
       setEmployees(emps);
+      setGroups(grps);
     } catch (e) {
       setEmpError(e.message);
     } finally {
@@ -609,8 +619,12 @@ function LabourTab() {
     try {
       await apiService.deleteEmployee(token, deleteTarget.id);
       setDeleteTarget(null);
-      const emps = await apiService.getEmployees(token, { estateId });
+      const [emps, grps] = await Promise.all([
+        apiService.getEmployees(token, { estateId }),
+        apiService.getWorkerGroups(token, estateId),
+      ]);
       setEmployees(emps);
+      setGroups(grps);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -656,6 +670,68 @@ function LabourTab() {
   const totalTarget   = assignments.reduce((s, a) => s + (a.expected_yield_kg || 0), 0);
   const totalActual   = assignments.reduce((s, a) => s + (a.actual_yield_kg || 0), 0);
   const overallEff    = totalTarget > 0 ? ((totalActual / totalTarget) * 100).toFixed(1) : '—';
+
+  // Helper functions for search and sort
+  const filterEmployees = (emps) => {
+    if (!empSearch) return emps;
+    const q = empSearch.toLowerCase();
+    return emps.filter(e =>
+      e.full_name?.toLowerCase().includes(q) ||
+      e.employee_code?.toLowerCase().includes(q) ||
+      e.group_code?.toLowerCase().includes(q) ||
+      e.skill_type?.toLowerCase().includes(q)
+    );
+  };
+
+  const sortArray = (arr, { field, dir }) => {
+    return [...arr].sort((a, b) => {
+      let aVal = a[field];
+      let bVal = b[field];
+      if (typeof aVal === 'string') {
+        aVal = aVal?.toLowerCase() || '';
+        bVal = bVal?.toLowerCase() || '';
+      }
+      const cmp = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+      return dir === 'asc' ? cmp : -cmp;
+    });
+  };
+
+  const toggleSort = (field, setter) => {
+    setter(s => ({
+      field,
+      dir: s.field === field && s.dir === 'asc' ? 'desc' : 'asc'
+    }));
+  };
+
+  const sortAndFilterEmployees = (emps) => {
+    return sortArray(filterEmployees(emps), empSort);
+  };
+
+  const filteredEmployees = sortAndFilterEmployees(employees);
+  const sortedAssignments = sortArray(assignments, assignSort);
+  const sortedRotationRows = rotation ? Object.entries(rotation.matrix).sort(([a], [b]) => {
+    const aNum = parseInt(a);
+    const bNum = parseInt(b);
+    return rotSort.dir === 'asc' ? aNum - bNum : bNum - aNum;
+  }) : [];
+
+  const SortHeader = ({ label, field, sort, onSort, style = {} }) => (
+    <th style={{
+      cursor: 'pointer', userSelect: 'none', position: 'relative',
+      backgroundColor: sort.field === field ? 'rgba(var(--color-primary-rgb, 37,99,235),0.08)' : '',
+      ...style
+    }}
+    onClick={() => onSort(field)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label}
+        {sort.field === field && (
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)' }}>
+            {sort.dir === 'asc' ? '↑' : '↓'}
+          </span>
+        )}
+      </div>
+    </th>
+  );
 
   const subBtnStyle = (v) => ({
     padding: '6px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
@@ -764,18 +840,18 @@ function LabourTab() {
               <table>
                 <thead>
                   <tr>
-                    <th>Block</th>
-                    <th>Group</th>
-                    <th>Workers</th>
-                    <th>Target (kg)</th>
-                    <th>Actual (kg)</th>
+                    <SortHeader label="Block" field="block_code" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Group" field="group_name" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Workers" field="group_capacity" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Target (kg)" field="expected_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <th>Efficiency</th>
                     <th>Progress</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {assignments.map(a => {
+                  {sortedAssignments.map(a => {
                     const exp = a.expected_yield_kg || 0;
                     const act = a.actual_yield_kg   || 0;
                     const eff = exp > 0 ? ((act / exp) * 100) : 0;
@@ -933,12 +1009,12 @@ function LabourTab() {
             <table>
               <thead>
                 <tr>
-                  <th>Round</th>
+                  <SortHeader label="Round" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
                   {(rotation.matrix[1] || []).map(b => <th key={b.block_code}>{b.block_code}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(rotation.matrix).sort(([a],[b]) => a - b).map(([rn, cells]) => (
+                {sortedRotationRows.map(([rn, cells]) => (
                   <tr key={rn} style={{
                     background: parseInt(rn) === rotation.current_round
                       ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
@@ -1018,25 +1094,45 @@ function LabourTab() {
                 </button>
               )}
             </div>
+
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-2)' }}>
+              <input
+                type="text"
+                placeholder="Search by name, code, group, or role…"
+                value={empSearch}
+                onChange={e => setEmpSearch(e.target.value)}
+                style={{
+                  width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
+                  background: 'var(--color-surface)', color: 'var(--color-text)',
+                  fontSize: '0.875rem'
+                }}
+              />
+              {empSearch && (
+                <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                  {filteredEmployees.length} of {employees.length} employees match
+                </div>
+              )}
+            </div>
+
             <table>
               <thead>
                 <tr>
-                  <th>Code</th>
-                  <th>Name</th>
-                  <th>Group</th>
-                  <th>Role</th>
-                  <th>Type</th>
-                  <th>Wage / day</th>
-                  <th>Hire Date</th>
+                  <SortHeader label="Code" field="employee_code" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Name" field="full_name" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Group" field="group_code" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Role" field="skill_type" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Type" field="employment_type" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Wage / day" field="daily_wage_lkr" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <SortHeader label="Hire Date" field="hire_date" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {employees.length === 0 ? (
+                {filteredEmployees.length === 0 ? (
                   <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>
-                    No employees found for this estate.
+                    {empSearch ? 'No employees match your search.' : 'No employees found for this estate.'}
                   </td></tr>
-                ) : employees.map(emp => (
+                ) : filteredEmployees.map(emp => (
                   <tr key={emp.id}>
                     <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.employee_code}</td>
                     <td style={{ fontWeight: 600 }}>{emp.full_name}</td>
