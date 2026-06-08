@@ -161,6 +161,34 @@ def _fetch(estate_id, year, month):
                 for r in cur.fetchall()
             ]
 
+            # ROI snapshot for the given month/year
+            cur.execute("""
+                SELECT cost_per_kg, rank, is_flagged, flag_reason
+                FROM roi_snapshot
+                WHERE estate_id = %s AND year = %s AND month = %s
+            """, (estate_id, year, month))
+            roi_row = cur.fetchone()
+            d['roi_snapshot'] = None
+            if roi_row:
+                d['roi_snapshot'] = {
+                    'cost_per_kg': _f(roi_row[0]) if roi_row[0] else None,
+                    'rank': roi_row[1],
+                    'is_flagged': roi_row[2],
+                    'flag_reason': roi_row[3] or '',
+                }
+
+            # ROI trend for the year (monthly cost_per_kg)
+            cur.execute("""
+                SELECT month, cost_per_kg
+                FROM roi_snapshot
+                WHERE estate_id = %s AND year = %s
+                ORDER BY month
+            """, (estate_id, year))
+            d['roi_monthly_trend'] = [
+                {'month': r[0], 'cost_per_kg': _f(r[1]) if r[1] else 0}
+                for r in cur.fetchall()
+            ]
+
         d['year']  = year
         d['month'] = month
         return d, None
@@ -347,6 +375,36 @@ def _chart_group_fill(groups):
                  fontweight='bold', pad=12, color='#1e3a5f')
     ax.legend(fontsize=8, framealpha=0.9)
     ax.grid(axis='x', alpha=0.2, color='#9ca3af')
+    _apply_clean_style(ax)
+    fig.tight_layout()
+    return _save_fig(fig)
+
+
+def _chart_roi_trend(monthly_roi):
+    """Line chart of cost/kg trend over the year."""
+    if len(monthly_roi) < 2:
+        return None
+
+    months = [MONTH_ABBR[m['month'] - 1] for m in monthly_roi]
+    costs  = [m['cost_per_kg'] for m in monthly_roi]
+    x      = list(range(len(months)))
+
+    fig, ax = plt.subplots(figsize=(7.5, 3.2))
+    
+    ax.plot(x, costs, 'o-', color='#2563eb', lw=2.5, ms=6, zorder=3)
+    ax.fill_between(x, costs, alpha=0.15, color='#2563eb', zorder=1)
+
+    # Value labels on points
+    for i, (xi, cost) in enumerate(zip(x, costs)):
+        ax.text(xi, cost + max(costs) * 0.02, f'{cost:.0f}',
+                ha='center', va='bottom', fontsize=7.5, fontweight='600', color='#1f2937')
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(months, fontsize=8)
+    ax.set_ylabel('Cost / kg (Rs.)', fontsize=9, color='#374151')
+    ax.set_title('Monthly ROI Trend — Cost per kg', fontsize=11, fontweight='bold',
+                 pad=14, color='#1e3a5f')
+    ax.grid(axis='y', alpha=0.2, color='#9ca3af', zorder=1)
     _apply_clean_style(ax)
     fig.tight_layout()
     return _save_fig(fig)
@@ -805,6 +863,59 @@ def _build_pdf(data):
         if chart_wx:
             story.append(Spacer(1, 0.5 * cm))
             story.append(from_buf(chart_wx, CW, 8 * cm))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PAGE 6 — ROI ANALYSIS
+    # ══════════════════════════════════════════════════════════════════════════
+    story.append(PageBreak())
+    story.append(Paragraph('Return on Investment (ROI) Analysis', SEC_TITLE))
+    story.append(HR())
+
+    roi_snap = data.get('roi_snapshot')
+    if roi_snap:
+        # ROI KPIs for the selected month
+        roi_kpi_row = [
+            kpi(f"Rs. {roi_snap['cost_per_kg']:.2f}" if roi_snap['cost_per_kg'] else '—', 
+                'Cost / kg'),
+            kpi(f"Rank #{roi_snap['rank']}" if roi_snap['rank'] else '—', 
+                'Estate Rank',
+                color=C_SUCCESS if roi_snap['rank'] and roi_snap['rank'] <= 5 else C_PRIMARY),
+            kpi('Flagged' if roi_snap['is_flagged'] else 'Compliant',
+                'Status',
+                color=C_DANGER if roi_snap['is_flagged'] else C_SUCCESS),
+            kpi('—', 'Period', color=C_PRIMARY),  # Placeholder for consistency in 4-column grid
+        ]
+        
+        roi_kpi_table = Table(
+            [[kpi_inner(roi_kpi_row[i]) for i in range(4)]],
+            colWidths=[cell_w] * 4,
+            style=TableStyle([
+                ('BACKGROUND',    (0,0), (-1,0), C_LIGHT2),
+                ('GRID',          (0,0), (-1,-1), 0.5, C_BORDER),
+                ('TOPPADDING',    (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ])
+        )
+        story.append(roi_kpi_table)
+
+        if roi_snap['is_flagged']:
+            story.append(Spacer(1, 0.2 * cm))
+            story.append(Paragraph(
+                f"⚠️ Flagged: {roi_snap['flag_reason']}" if roi_snap['flag_reason'] else "⚠️ Flagged",
+                ps('flag', fontName='Helvetica-Bold', fontSize=9,
+                   textColor=C_DANGER, spaceAfter=6)
+            ))
+
+    # ROI trend chart for the year
+    chart_roi = _chart_roi_trend(data.get('roi_monthly_trend', []))
+    if chart_roi:
+        story.append(Spacer(1, 0.4 * cm))
+        story.append(from_buf(chart_roi, CW, 8 * cm))
+    else:
+        story.append(Paragraph(
+            'No ROI trend data available for this year.',
+            ps('noroi', fontName='Helvetica', fontSize=9, textColor=C_MUTED, spaceAfter=8)
+        ))
 
     # ── Build ─────────────────────────────────────────────────────────────────
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)

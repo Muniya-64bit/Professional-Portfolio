@@ -222,60 +222,29 @@ function ROITab() {
   const [estates, setEstates] = useState([]);
   const [summary, setSummary] = useState(null);
   const [rankings, setRankings] = useState([]);
-  const [estateMonthlyData, setEstateMonthlyData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [showCSVImport, setShowCSVImport] = useState(null);
-  
-  // Selected filters
-  const [selectedEstateId, setSelectedEstateId] = useState('');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [showCSVImport, setShowCSVImport] = useState(null); // 'costs' | 'yield' | null
 
-  // Generate year options (last 5 years)
-  const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
-  const monthOptions = Array.from({ length: 12 }, (_, i) => ({
-    value: i + 1,
-    label: new Date(2000, i, 1).toLocaleString('default', { month: 'long' })
-  }));
-
-  // Load all data
+  // Load data on mount and when modal closes
   const loadROIData = async () => {
     setLoading(true);
     setError('');
     try {
-      const [estatesData] = await Promise.all([
+      const [estatesData, summaryData, rankingsData] = await Promise.all([
         apiService.getROIEstates(token),
+        apiService.getROISummary(token),
+        apiService.getROIRankings(token),
       ]);
       setEstates(estatesData);
-      if (estatesData.length > 0 && !selectedEstateId) {
-        setSelectedEstateId(estatesData[0].id);
-      }
+      setSummary(summaryData);
+      setRankings(rankingsData);
     } catch (err) {
       console.error('Failed to load ROI data:', err);
       setError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Load data for selected filters
-  const loadFilteredData = async () => {
-    if (!selectedEstateId || !selectedYear || !selectedMonth) return;
-    
-    try {
-      const [summaryData, rankingsData, trendData] = await Promise.all([
-        apiService.getROISummary(token, { year: selectedYear, month: selectedMonth }),
-        apiService.getROIRankings(token, { year: selectedYear, month: selectedMonth }),
-        apiService.getROIEstateTrend(token, selectedEstateId, selectedYear),
-      ]);
-      setSummary(summaryData);
-      setRankings(rankingsData);
-      setEstateMonthlyData(trendData);
-    } catch (err) {
-      console.error('Failed to load filtered ROI data:', err);
-      setError(err.message);
     }
   };
 
@@ -285,19 +254,13 @@ function ROITab() {
     }
   }, [token]);
 
-  useEffect(() => {
-    if (token && selectedEstateId && selectedYear && selectedMonth) {
-      loadFilteredData();
-    }
-  }, [token, selectedEstateId, selectedYear, selectedMonth]);
-
   const handleModalClose = () => {
     setShowModal(false);
   };
 
   const handleDataSaved = () => {
+    // Refresh ROI data when new data is saved
     loadROIData();
-    loadFilteredData();
   };
 
   if (loading) {
@@ -309,92 +272,8 @@ function ROITab() {
     );
   }
 
-  // Simple line graph for estate ROI over the year
-  const maxCost = Math.max(...estateMonthlyData.map(d => d.cost_per_kg), 1);
-  const graphHeight = 200;
-
   return (
     <>
-      {/* Filter Controls */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
-            Estate:
-          </label>
-          <select
-            value={selectedEstateId}
-            onChange={e => setSelectedEstateId(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface-2)',
-              color: 'var(--color-text)',
-              fontSize: '0.875rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              minWidth: '180px'
-            }}
-          >
-            <option value="">Select Estate</option>
-            {estates.map(estate => (
-              <option key={estate.id} value={estate.id}>{estate.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
-            Year:
-          </label>
-          <select
-            value={selectedYear}
-            onChange={e => setSelectedYear(parseInt(e.target.value))}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface-2)',
-              color: 'var(--color-text)',
-              fontSize: '0.875rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              minWidth: '120px'
-            }}
-          >
-            {yearOptions.map(year => (
-              <option key={year} value={year}>{year}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label style={{ fontSize: '0.875rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
-            Month:
-          </label>
-          <select
-            value={selectedMonth}
-            onChange={e => setSelectedMonth(parseInt(e.target.value))}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface-2)',
-              color: 'var(--color-text)',
-              fontSize: '0.875rem',
-              fontWeight: '600',
-              cursor: 'pointer',
-              minWidth: '140px'
-            }}
-          >
-            {monthOptions.map(m => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
       <div className="kpi-grid">
         <KpiCard 
           icon="🏆" 
@@ -426,90 +305,12 @@ function ROITab() {
         />
       </div>
 
-      {/* Estate ROI Graph */}
-      {estateMonthlyData.length > 0 && (
-        <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
-          <div className="section-card-header">
-            <div className="section-card-title">
-              <div className="section-card-title-icon">📈</div>
-              {estates.find(e => e.id === selectedEstateId)?.name || 'Estate'} - ROI Trend {selectedYear}
-            </div>
-          </div>
-          <div className="section-card-body" style={{ paddingBottom: '2rem' }}>
-            <svg
-              width="100%"
-              height={graphHeight}
-              style={{ minHeight: graphHeight }}
-              viewBox={`0 0 1200 ${graphHeight}`}
-              preserveAspectRatio="xMidYMid meet"
-            >
-              {/* Grid lines */}
-              {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
-                const y = graphHeight * (1 - pct);
-                const cost = maxCost * pct;
-                return (
-                  <g key={`grid-${i}`}>
-                    <line x1="50" y1={y} x2="1200" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" opacity="0.3" />
-                    <text x="20" y={y + 5} fontSize="12" fill="var(--color-text-muted)" textAnchor="end">
-                      {cost.toFixed(0)}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* Line chart */}
-              <polyline
-                points={estateMonthlyData.map((d, i) => {
-                  const x = 100 + (i / 11) * 1100;
-                  const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
-                  return `${x},${y}`;
-                }).join(' ')}
-                fill="none"
-                stroke="var(--color-primary)"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-
-              {/* Data points */}
-              {estateMonthlyData.map((d, i) => {
-                const x = 100 + (i / 11) * 1100;
-                const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
-                const isSelected = i === selectedMonth - 1;
-                return (
-                  <circle
-                    key={`point-${i}`}
-                    cx={x}
-                    cy={y}
-                    r={isSelected ? 6 : 4}
-                    fill={isSelected ? 'var(--color-primary)' : 'var(--color-surface-3)'}
-                    stroke="var(--color-primary)"
-                    strokeWidth="2"
-                  />
-                );
-              })}
-
-              {/* Month labels */}
-              {monthOptions.map((m, i) => {
-                const x = 100 + (i / 11) * 1100;
-                return (
-                  <text key={`label-${i}`} x={x} y={graphHeight - 10} fontSize="12" fill="var(--color-text-muted)" textAnchor="middle">
-                    {m.label.slice(0, 3)}
-                  </text>
-                );
-              })}
-            </svg>
-          </div>
-        </div>
-      )}
-
-      {/* Estate Rankings for Selected Month */}
-      <div className="table-wrap" style={{ marginTop: 'var(--space-6)' }}>
+      <div className="table-wrap">
         <div className="table-header-bar">
           <div>
             <div className="table-title">Estate ROI Rankings</div>
             <div className="table-subtitle">
-              For {monthOptions.find(m => m.value === selectedMonth)?.label} {selectedYear}
+              Sorted by cost-per-kg · {summary?.month ? ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][summary.month-1] : '—'} {summary?.year || '—'}
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -601,8 +402,8 @@ function ROITab() {
                 </td>
               </tr>
             ) : (
-              rankings.map((e, idx) => (
-                <tr key={idx}>
+              rankings.map(e => (
+                <tr key={e.estate_id || e.name}>
                   <td>
                     <div className={`rank-badge rank-${e.rank || 1}`}>
                       {e.rank || '—'}
@@ -636,6 +437,50 @@ function ROITab() {
           </tbody>
         </table>
       </div>
+
+      {/* Cost Per kg Comparison */}
+      {rankings.length > 0 && (
+        <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
+          <div className="section-card-header">
+            <div className="section-card-title">
+              <div className="section-card-title-icon">📊</div>
+              Cost Per kg Comparison
+            </div>
+          </div>
+          <div className="section-card-body">
+            {rankings.map(e => {
+              const maxCost = summary?.worst_cost_per_kg || 400;
+              const costPerKg = e.cost_per_kg || 0;
+              const pct = maxCost > 0 ? (costPerKg / maxCost) * 100 : 0;
+              const colors = [
+                'progress-green',
+                'progress-green',
+                'progress-amber',
+                'progress-red',
+              ];
+              const colorIndex = Math.min((e.rank || 1) - 1, 3);
+              return (
+                <div key={e.estate_id || e.name} style={{ marginBottom: 'var(--space-5)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-2)', fontSize: '0.9rem' }}>
+                    <span style={{ fontWeight: '600', color: 'var(--color-text)' }}>
+                      {e.estate_name || e.name}
+                    </span>
+                    <span style={{ fontWeight: '700' }}>
+                      Rs. {costPerKg.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="progress-wrap" style={{ height: 12 }}>
+                    <div 
+                      className={`progress-bar ${colors[colorIndex]}`} 
+                      style={{ width: `${Math.min(pct, 100)}%` }} 
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Data Entry Modal */}
       <DataEntryModal
@@ -835,8 +680,8 @@ function FertilizerTab() {
 
 /* ── Tab: Labour ──────────────────────────────────────────────────────── */
 function LabourTab() {
-  const { token, canWrite, isManager } = useAuth();
-  const [view, setView]           = useState('month');     // 'month' | 'rotation' | 'employees'
+  const { token } = useAuth();
+  const [view, setView]           = useState('week');      // 'week' | 'rotation' | 'employees'
   const [estates, setEstates]     = useState([]);
   const [estateId, setEstateId]   = useState('');
   const [plan, setPlan]           = useState(null);        // current week plan
@@ -845,23 +690,6 @@ function LabourTab() {
   const [groups, setGroups]       = useState([]);
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState('');
-
-  // Search and sort state
-  const [empSearch, setEmpSearch]     = useState('');
-  const [empSort, setEmpSort]         = useState({ field: 'full_name', dir: 'asc' });
-  const [assignSort, setAssignSort]   = useState({ field: 'block_code', dir: 'asc' });
-  const [rotSort, setRotSort]         = useState({ field: 'round', dir: 'asc' });
-
-  // Target editing state
-  const [addingGroup, setAddingGroup] = useState(null);   // assignment id showing add-group dropdown
-  const [editingTarget, setEditingTarget] = useState(null); // assignment id being edited
-  const [targetInputs, setTargetInputs]   = useState({});   // { assignmentId: value }
-  const [savingTarget, setSavingTarget]   = useState(false);
-
-  // Yield editing state
-  const [editingYield, setEditingYield]   = useState(null);  // assignment id being edited
-  const [yieldInputsTable, setYieldInputsTable] = useState({});  // { assignmentId: value }
-  const [savingYield, setSavingYield]     = useState(false);
 
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
@@ -878,16 +706,12 @@ function LabourTab() {
   const [deleteTarget, setDeleteTarget] = useState(null); // employee obj
   const [deleting, setDeleting]         = useState(false);
 
-  // Yield recording modal state
-  const [yieldModal, setYieldModal]   = useState(false);
-  const [yieldInputs, setYieldInputs] = useState({});  // { assignmentId: kg_string }
-  const [yieldSaving, setYieldSaving] = useState(false);
-  const [yieldError, setYieldError]   = useState('');
-
-  // First day of the current month (YYYY-MM-01)
-  const monthStart = (() => {
+  // Current week's Monday
+  const weekStart = (() => {
     const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1).toLocaleDateString('en-CA');
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff)).toISOString().slice(0, 10);
   })();
 
   // Load estates on mount
@@ -909,8 +733,8 @@ function LabourTab() {
 
     const load = async () => {
       try {
-        if (view === 'month') {
-          const plans = await apiService.getLabourPlans(token, { estateId, monthStart });
+        if (view === 'week') {
+          const plans = await apiService.getLabourPlans(token, { estateId, weekStart });
           if (plans.length > 0) {
             const detail = await apiService.getLabourPlan(token, plans[0].id);
             setPlan(detail);
@@ -935,7 +759,7 @@ function LabourTab() {
       }
     };
     load();
-  }, [token, estateId, view, monthStart]);
+  }, [token, estateId, view, weekStart]);
 
   const blankForm = {
     employee_code: '', full_name: '', gender: 'F',
@@ -986,12 +810,8 @@ function LabourTab() {
         });
       }
       setEmpModal(null);
-      const [emps, grps] = await Promise.all([
-        apiService.getEmployees(token, { estateId }),
-        apiService.getWorkerGroups(token, estateId),
-      ]);
+      const emps = await apiService.getEmployees(token, { estateId });
       setEmployees(emps);
-      setGroups(grps);
     } catch (e) {
       setEmpError(e.message);
     } finally {
@@ -1005,12 +825,8 @@ function LabourTab() {
     try {
       await apiService.deleteEmployee(token, deleteTarget.id);
       setDeleteTarget(null);
-      const [emps, grps] = await Promise.all([
-        apiService.getEmployees(token, { estateId }),
-        apiService.getWorkerGroups(token, estateId),
-      ]);
+      const emps = await apiService.getEmployees(token, { estateId });
       setEmployees(emps);
-      setGroups(grps);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1018,149 +834,12 @@ function LabourTab() {
     }
   };
 
-  const openYieldModal = () => {
-    const pre = {};
-    (plan?.assignments || []).forEach(a => {
-      pre[a.id] = a.actual_yield_kg != null ? String(a.actual_yield_kg) : '';
-    });
-    setYieldInputs(pre);
-    setYieldError('');
-    setYieldModal(true);
-  };
-
-  const handleSaveYield = async () => {
-    const yields = Object.entries(yieldInputs)
-      .filter(([, v]) => v !== '' && !isNaN(parseFloat(v)))
-      .map(([assignment_id, v]) => ({ assignment_id, actual_yield_kg: parseFloat(v) }));
-    if (yields.length === 0) {
-      setYieldError('Enter at least one actual yield value.');
-      return;
-    }
-    setYieldSaving(true); setYieldError('');
-    try {
-      await apiService.recordPlanYield(token, plan.id, yields);
-      setYieldModal(false);
-      // Reload plan to reflect saved actuals
-      const updated = await apiService.getLabourPlan(token, plan.id);
-      setPlan(updated);
-    } catch (e) {
-      setYieldError(e.message);
-    } finally {
-      setYieldSaving(false);
-    }
-  };
-
-  const handleSaveTargetValue = async (assignmentId, newValue) => {
-    if (!newValue || newValue <= 0) {
-      setEditingTarget(null);
-      return;
-    }
-    setSavingTarget(true);
-    try {
-      await apiService.overrideAssignment(token, assignmentId, { expected_yield_kg: parseFloat(newValue) });
-      // Reload plan to reflect updated targets
-      const updated = await apiService.getLabourPlan(token, plan.id);
-      setPlan(updated);
-      setEditingTarget(null);
-    } catch (e) {
-      console.error('Error saving target:', e);
-      setEditingTarget(null);
-    } finally {
-      setSavingTarget(false);
-    }
-  };
-
-  const handleSaveYieldValue = async (assignmentId, newValue) => {
-    if (newValue === '' || newValue === null) {
-      setEditingYield(null);
-      return;
-    }
-    setSavingYield(true);
-    try {
-      const numValue = parseFloat(newValue);
-      if (isNaN(numValue)) throw new Error('Invalid number');
-      await apiService.recordPlanYield(token, plan.id, [{ assignment_id: assignmentId, actual_yield_kg: numValue }]);
-      // Reload plan to reflect updated yields
-      const updated = await apiService.getLabourPlan(token, plan.id);
-      setPlan(updated);
-      setEditingYield(null);
-    } catch (e) {
-      console.error('Error saving yield:', e);
-      setEditingYield(null);
-    } finally {
-      setSavingYield(false);
-    }
-  };
-
-
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
   const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
   const totalTarget   = assignments.reduce((s, a) => s + (a.expected_yield_kg || 0), 0);
   const totalActual   = assignments.reduce((s, a) => s + (a.actual_yield_kg || 0), 0);
   const overallEff    = totalTarget > 0 ? ((totalActual / totalTarget) * 100).toFixed(1) : '—';
-
-  // Helper functions for search and sort
-  const filterEmployees = (emps) => {
-    if (!empSearch) return emps;
-    const q = empSearch.toLowerCase();
-    return emps.filter(e =>
-      e.full_name?.toLowerCase().includes(q) ||
-      e.employee_code?.toLowerCase().includes(q) ||
-      e.group_code?.toLowerCase().includes(q) ||
-      e.skill_type?.toLowerCase().includes(q)
-    );
-  };
-
-  const sortArray = (arr, { field, dir }) => {
-    return [...arr].sort((a, b) => {
-      let aVal = a[field];
-      let bVal = b[field];
-      if (typeof aVal === 'string') {
-        aVal = aVal?.toLowerCase() || '';
-        bVal = bVal?.toLowerCase() || '';
-      }
-      const cmp = aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-      return dir === 'asc' ? cmp : -cmp;
-    });
-  };
-
-  const toggleSort = (field, setter) => {
-    setter(s => ({
-      field,
-      dir: s.field === field && s.dir === 'asc' ? 'desc' : 'asc'
-    }));
-  };
-
-  const sortAndFilterEmployees = (emps) => {
-    return sortArray(filterEmployees(emps), empSort);
-  };
-
-  const filteredEmployees = sortAndFilterEmployees(employees);
-  const sortedAssignments = sortArray(assignments, assignSort);
-  const sortedRotationRows = rotation ? Object.entries(rotation.matrix).sort(([a], [b]) => {
-    const aNum = parseInt(a);
-    const bNum = parseInt(b);
-    return rotSort.dir === 'asc' ? aNum - bNum : bNum - aNum;
-  }) : [];
-
-  const SortHeader = ({ label, field, sort, onSort, style = {} }) => (
-    <th style={{
-      cursor: 'pointer', userSelect: 'none', position: 'relative',
-      backgroundColor: sort.field === field ? 'rgba(var(--color-primary-rgb, 37,99,235),0.08)' : '',
-      ...style
-    }}
-    onClick={() => onSort(field)}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {label}
-        {sort.field === field && (
-          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-            {sort.dir === 'asc' ? '↑' : '↓'}
-          </span>
-        )}
-      </div>
-    </th>
-  );
 
   const subBtnStyle = (v) => ({
     padding: '6px 16px', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
@@ -1176,12 +855,10 @@ function LabourTab() {
         <select
           value={estateId}
           onChange={e => setEstateId(e.target.value)}
-          disabled={!canWrite}
           style={{
             padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)',
             background: 'var(--color-surface-2)', color: 'var(--color-text)',
-            fontSize: '0.875rem', fontWeight: 600,
-            cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7,
+            fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
           }}
         >
           {estates.length === 0 && <option value="">Loading estates…</option>}
@@ -1189,7 +866,7 @@ function LabourTab() {
         </select>
 
         <div style={{ display: 'flex', gap: 6 }}>
-          <button style={subBtnStyle('month')}     onClick={() => setView('month')}>This Month</button>
+          <button style={subBtnStyle('week')}      onClick={() => setView('week')}>This Week</button>
           <button style={subBtnStyle('rotation')}  onClick={() => setView('rotation')}>Rotation</button>
           <button style={subBtnStyle('employees')} onClick={() => setView('employees')}>Employees</button>
         </div>
@@ -1208,8 +885,8 @@ function LabourTab() {
         </div>
       )}
 
-      {/* ── VIEW: This Month ── */}
-      {!loading && view === 'month' && (
+      {/* ── VIEW: This Week ── */}
+      {!loading && view === 'week' && (
         <>
           {/* KPI row */}
           <div className="kpi-grid">
@@ -1222,7 +899,10 @@ function LabourTab() {
           {/* Plan meta row */}
           {plan && (
             <div style={{ display: 'flex', gap: 12, marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
-              <span className="badge badge-neutral">Month of {plan.period_start}</span>
+              <span className="badge badge-neutral">Week starting {plan.week_start}</span>
+              <span className={`badge ${plan.status === 'published' ? 'badge-success' : plan.status === 'completed' ? 'badge-neutral' : 'badge-warning'}`}>
+                {plan.status}
+              </span>
               {plan.cycle_name && (
                 <span className="badge badge-neutral">
                   {plan.cycle_name} · Round {plan.current_round}/{plan.total_rounds}
@@ -1236,37 +916,13 @@ function LabourTab() {
             <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)',
                           background: 'var(--color-surface-2)', borderRadius: 12 }}>
               <div style={{ fontSize: '2rem', marginBottom: 8 }}>📋</div>
-              <p>No labour plan for this month yet.</p>
-              {(canWrite || isManager) && (
-                <button onClick={async () => {
-                  setLoading(true);
-                  try {
-                    const result = await apiService.createManualPlan(token, {
-                      estate_id: estateId,
-                      period_start: monthStart,
-                      assignments: [],
-                      status: 'draft',
-                      notes: 'Manual plan creation'
-                    });
-                    // Reload plan details
-                    const detail = await apiService.getLabourPlan(token, result.plan_id);
-                    setPlan(detail);
-                    setError('');
-                  } catch (e) {
-                    setError(e.message);
-                  } finally {
-                    setLoading(false);
-                  }
-                }} disabled={loading} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 8, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.875rem', opacity: loading ? 0.7 : 1 }}>
-                  {loading ? 'Creating...' : '+ Create Plan'}
-                </button>
-              )}
+              <p>No labour plan for this week yet.</p>
             </div>
           ) : (
             <div className="table-wrap">
               <div className="table-header-bar">
                 <div>
-                  <div className="table-title">Block Assignments — {monthStart}</div>
+                  <div className="table-title">Block Assignments — {weekStart}</div>
                   <div className="table-subtitle">
                     Rotation-generated assignments · {assignments.length} blocks · manual overrides shown
                   </div>
@@ -1276,18 +932,18 @@ function LabourTab() {
               <table>
                 <thead>
                   <tr>
-                    <SortHeader label="Block" field="block_code" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Group" field="group_name" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Workers" field="group_capacity" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Predicted (kg)" field="predicted_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Target (kg)" field="expected_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <th>Block</th>
+                    <th>Group</th>
+                    <th>Workers</th>
+                    <th>Target (kg)</th>
+                    <th>Actual (kg)</th>
                     <th>Efficiency</th>
                     <th>Progress</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedAssignments.map(a => {
+                  {assignments.map(a => {
                     const exp = a.expected_yield_kg || 0;
                     const act = a.actual_yield_kg   || 0;
                     const eff = exp > 0 ? ((act / exp) * 100) : 0;
@@ -1309,70 +965,11 @@ function LabourTab() {
                           )}
                         </td>
                         <td style={{ fontSize: '0.875rem' }}>
-                          {a.group_name ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name}</div>
-                              {a.is_manual_override && a.original_group_name && (
-                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
-                                  (was: {a.original_group_name})
-                                </div>
-                              )}
-                              {(canWrite || isManager) && (
-                                <button
-                                  onClick={async () => {
-                                    setSavingTarget(true);
-                                    try {
-                                      await apiService.removeGroupFromAssignment(token, a.id);
-                                      const updated = await apiService.getLabourPlan(token, plan.id);
-                                      setPlan(updated);
-                                      setError('');
-                                    } catch (err) { setError(err.message); }
-                                    finally { setSavingTarget(false); }
-                                  }}
-                                  disabled={savingTarget}
-                                  style={{ padding: '2px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.4)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600, whiteSpace: 'nowrap' }}
-                                >
-                                  Remove
-                                </button>
-                              )}
+                          <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{a.group_name || '—'}</div>
+                          {a.is_manual_override && a.original_group_name && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                              was: {a.original_group_name}
                             </div>
-                          ) : (canWrite || isManager) && (
-                            addingGroup === a.id ? (
-                              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                                <select
-                                  autoFocus
-                                  defaultValue=""
-                                  disabled={savingTarget}
-                                  onChange={async (e) => {
-                                    if (!e.target.value) return;
-                                    setSavingTarget(true);
-                                    try {
-                                      await apiService.changeGroupAssignment(token, a.id, e.target.value);
-                                      const updated = await apiService.getLabourPlan(token, plan.id);
-                                      setPlan(updated);
-                                      setAddingGroup(null);
-                                      setError('');
-                                    } catch (err) { setError(err.message); }
-                                    finally { setSavingTarget(false); }
-                                  }}
-                                  style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-primary)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 120 }}
-                                >
-                                  <option value="">Select group…</option>
-                                  {groups
-                                    .filter(g => !assignments.some(ax => ax.worker_group_id === g.id))
-                                    .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
-                                  }
-                                </select>
-                                <button onClick={() => setAddingGroup(null)} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => setAddingGroup(a.id)}
-                                style={{ padding: '4px 12px', borderRadius: 6, border: '1.5px dashed var(--color-warning)', background: 'transparent', color: 'var(--color-warning)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
-                              >
-                                + Add Group
-                              </button>
-                            )
                           )}
                         </td>
                         <td>
@@ -1381,138 +978,8 @@ function LabourTab() {
                             <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
                           </div>
                         </td>
-                        <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-                          {a.predicted_yield_kg ? Math.round(a.predicted_yield_kg).toLocaleString() : '—'}
-                        </td>
-                        <td style={{ fontWeight: 700 }}>
-                          {editingTarget === a.id ? (
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={targetInputs[a.id] ?? exp}
-                                onChange={e => setTargetInputs(p => ({ ...p, [a.id]: e.target.value }))}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleSaveTargetValue(a.id, targetInputs[a.id]);
-                                  if (e.key === 'Escape') setEditingTarget(null);
-                                }}
-                                autoFocus
-                                disabled={savingTarget}
-                                style={{
-                                  width: '80px', padding: '6px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
-                                  background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
-                                  fontWeight: 700
-                                }}
-                              />
-                              <button
-                                onClick={() => handleSaveTargetValue(a.id, targetInputs[a.id])}
-                                disabled={savingTarget}
-                                style={{
-                                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
-                                  background: 'var(--color-success)', color: '#fff', fontWeight: 600,
-                                  fontSize: '0.75rem', opacity: savingTarget ? 0.6 : 1
-                                }}
-                              >
-                                {savingTarget ? '⏳' : '✓'}
-                              </button>
-                              <button
-                                onClick={() => setEditingTarget(null)}
-                                disabled={savingTarget}
-                                style={{
-                                  padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)',
-                                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer',
-                                  fontSize: '0.75rem', opacity: savingTarget ? 0.6 : 1
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ) : (
-                            <div
-                              onClick={() => {
-                                setEditingTarget(a.id);
-                                setTargetInputs(p => ({ ...p, [a.id]: exp }));
-                              }}
-                              style={{
-                                cursor: 'pointer', padding: '4px 8px', borderRadius: 4,
-                                background: 'transparent', transition: 'background 0.2s',
-                                display: 'flex', alignItems: 'center', gap: 8
-                              }}
-                              onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface-2)'}
-                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                              title="Click to edit target value"
-                            >
-                              {exp ? Math.round(exp).toLocaleString() : '—'}
-                              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ fontWeight: 700 }}>
-                          {editingYield === a.id ? (
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={yieldInputsTable[a.id] ?? act ?? ''}
-                                onChange={e => setYieldInputsTable(p => ({ ...p, [a.id]: e.target.value }))}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') handleSaveYieldValue(a.id, yieldInputsTable[a.id]);
-                                  if (e.key === 'Escape') setEditingYield(null);
-                                }}
-                                autoFocus
-                                disabled={savingYield}
-                                style={{
-                                  width: '80px', padding: '6px 8px', borderRadius: 4, border: '2px solid var(--color-primary)',
-                                  background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.9rem',
-                                  fontWeight: 700
-                                }}
-                              />
-                              <button
-                                onClick={() => handleSaveYieldValue(a.id, yieldInputsTable[a.id])}
-                                disabled={savingYield}
-                                style={{
-                                  padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
-                                  background: 'var(--color-success)', color: '#fff', fontWeight: 600,
-                                  fontSize: '0.75rem', opacity: savingYield ? 0.6 : 1
-                                }}
-                              >
-                                {savingYield ? '⏳' : '✓'}
-                              </button>
-                              <button
-                                onClick={() => setEditingYield(null)}
-                                disabled={savingYield}
-                                style={{
-                                  padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)',
-                                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer',
-                                  fontSize: '0.75rem', opacity: savingYield ? 0.6 : 1
-                                }}
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ) : (
-                            <div
-                              onClick={() => {
-                                setEditingYield(a.id);
-                                setYieldInputsTable(p => ({ ...p, [a.id]: act || '' }));
-                              }}
-                              style={{
-                                cursor: 'pointer',
-                                padding: '4px 8px', borderRadius: 4,
-                                background: 'transparent', transition: 'background 0.2s',
-                                display: 'flex', alignItems: 'center', gap: 8
-                              }}
-                              onMouseEnter={e => e.currentTarget.style.background = 'var(--color-surface-2)'}
-                              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                              title="Click to record actual yield"
-                            >
-                              {act ? Math.round(act).toLocaleString() : '—'}
-                              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>✏️</span>
-                            </div>
-                          )}
-                        </td>
+                        <td>{exp ? Math.round(exp).toLocaleString() : '—'}</td>
+                        <td style={{ fontWeight: 700 }}>{act ? Math.round(act).toLocaleString() : '—'}</td>
                         <td style={{ fontWeight: 700, color: effColor }}>
                           {act === 0 ? '—' : `${eff.toFixed(1)}%`}
                         </td>
@@ -1521,6 +988,13 @@ function LabourTab() {
                             {pct > 0 && <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />}
                           </div>
                         </td>
+                        <td>
+                          <span className={`badge ${
+                            a.status === 'completed'   ? 'badge-success' :
+                            a.status === 'in_progress' ? 'badge-warning' :
+                            a.status === 'cancelled'   ? 'badge-danger'  : 'badge-neutral'
+                          }`}>{a.status}</span>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1528,67 +1002,6 @@ function LabourTab() {
               </table>
             </div>
           )}
-
-          {/* ── Efficiency Summary (shows once actuals are recorded) ── */}
-          {plan && totalActual > 0 && (() => {
-            const planEff = totalTarget > 0 ? (totalActual / totalTarget * 100) : 0;
-            const kgPerWorker = totalWorkers > 0 ? (totalActual / totalWorkers) : 0;
-            const variance = totalActual - totalTarget;
-            const effColor = planEff >= 100 ? 'var(--color-success)' : planEff >= 90 ? 'var(--color-warning)' : 'var(--color-danger)';
-            const recorded = assignments.filter(a => a.actual_yield_kg != null).length;
-            return (
-              <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
-                <div className="section-card-header">
-                  <div className="section-card-title">
-                    <div className="section-card-title-icon">⚡</div>
-                    Yield Efficiency Report
-                  </div>
-                  <span className="badge badge-neutral">{recorded}/{assignments.length} blocks recorded</span>
-                </div>
-                <div className="section-card-body">
-                  {/* Summary stats */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 24 }}>
-                    {[
-                      { label: 'Plan Efficiency', value: `${planEff.toFixed(1)}%`, color: effColor },
-                      { label: 'Actual Total', value: `${Math.round(totalActual).toLocaleString()} kg`, color: 'var(--color-text)' },
-                      { label: 'Expected Total', value: `${Math.round(totalTarget).toLocaleString()} kg`, color: 'var(--color-text-muted)' },
-                      { label: 'Variance', value: `${variance >= 0 ? '+' : ''}${Math.round(variance).toLocaleString()} kg`, color: variance >= 0 ? 'var(--color-success)' : 'var(--color-danger)' },
-                      { label: 'kg / Worker', value: kgPerWorker > 0 ? `${Math.round(kgPerWorker).toLocaleString()}` : '—', color: 'var(--color-text)' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: '1.25rem', fontWeight: 700, color }}>{value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Per-block efficiency bars */}
-                  {assignments.filter(a => a.actual_yield_kg != null).map(a => {
-                    const exp = a.expected_yield_kg || 0;
-                    const act = parseFloat(a.actual_yield_kg);
-                    const eff = exp > 0 ? (act / exp * 100) : 0;
-                    const pct = Math.min(120, eff);
-                    const barClass = eff >= 100 ? 'progress-green' : eff >= 90 ? 'progress-amber' : 'progress-red';
-                    const col = eff >= 100 ? 'var(--color-success)' : eff >= 90 ? 'var(--color-warning)' : 'var(--color-danger)';
-                    return (
-                      <div key={a.id} style={{ marginBottom: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: '0.875rem' }}>
-                          <span style={{ fontWeight: 600 }}>{a.block_code} <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>{a.group_name || ''}</span></span>
-                          <span style={{ fontWeight: 700, color: col }}>{eff.toFixed(1)}%
-                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 400, fontSize: '0.8rem', marginLeft: 8 }}>
-                              {Math.round(act).toLocaleString()} / {Math.round(exp).toLocaleString()} kg
-                            </span>
-                          </span>
-                        </div>
-                        <div className="progress-wrap" style={{ height: 8 }}>
-                          <div className={`progress-bar ${barClass}`} style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </>
       )}
 
@@ -1627,12 +1040,12 @@ function LabourTab() {
             <table>
               <thead>
                 <tr>
-                  <SortHeader label="Round" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
+                  <th>Round</th>
                   {(rotation.matrix[1] || []).map(b => <th key={b.block_code}>{b.block_code}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {sortedRotationRows.map(([rn, cells]) => (
+                {Object.entries(rotation.matrix).sort(([a],[b]) => a - b).map(([rn, cells]) => (
                   <tr key={rn} style={{
                     background: parseInt(rn) === rotation.current_round
                       ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
@@ -1700,57 +1113,35 @@ function LabourTab() {
                 <div className="table-title">Field Employees</div>
                 <div className="table-subtitle">{employees.length} active employees</div>
               </div>
-              {(canWrite || isManager) && (
-                <button
-                  onClick={openAddModal}
-                  style={{
-                    padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
-                  }}
-                >
-                  + Add Employee
-                </button>
-              )}
-            </div>
-
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-2)' }}>
-              <input
-                type="text"
-                placeholder="Search by name, code, group, or role…"
-                value={empSearch}
-                onChange={e => setEmpSearch(e.target.value)}
+              <button
+                onClick={openAddModal}
                 style={{
-                  width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
-                  background: 'var(--color-surface)', color: 'var(--color-text)',
-                  fontSize: '0.875rem'
+                  padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
                 }}
-              />
-              {empSearch && (
-                <div style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                  {filteredEmployees.length} of {employees.length} employees match
-                </div>
-              )}
+              >
+                + Add Employee
+              </button>
             </div>
-
             <table>
               <thead>
                 <tr>
-                  <SortHeader label="Code" field="employee_code" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Name" field="full_name" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Group" field="group_code" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Role" field="skill_type" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Type" field="employment_type" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Wage / day" field="daily_wage_lkr" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
-                  <SortHeader label="Hire Date" field="hire_date" sort={empSort} onSort={(f) => toggleSort(f, setEmpSort)} />
+                  <th>Code</th>
+                  <th>Name</th>
+                  <th>Group</th>
+                  <th>Role</th>
+                  <th>Type</th>
+                  <th>Wage / day</th>
+                  <th>Hire Date</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredEmployees.length === 0 ? (
+                {employees.length === 0 ? (
                   <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>
-                    {empSearch ? 'No employees match your search.' : 'No employees found for this estate.'}
+                    No employees found for this estate.
                   </td></tr>
-                ) : filteredEmployees.map(emp => (
+                ) : employees.map(emp => (
                   <tr key={emp.id}>
                     <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.employee_code}</td>
                     <td style={{ fontWeight: 600 }}>{emp.full_name}</td>
@@ -1767,32 +1158,26 @@ function LabourTab() {
                     <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{emp.hire_date}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        {canWrite ? (
-                          <>
-                            <button
-                              onClick={() => openEditModal(emp)}
-                              style={{
-                                padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
-                                background: 'transparent', color: 'var(--color-text)', cursor: 'pointer',
-                                fontSize: '0.75rem', fontWeight: 600,
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => setDeleteTarget(emp)}
-                              style={{
-                                padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)',
-                                background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer',
-                                fontSize: '0.75rem', fontWeight: 600,
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        ) : (
-                          <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>—</span>
-                        )}
+                        <button
+                          onClick={() => openEditModal(emp)}
+                          style={{
+                            padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)',
+                            background: 'transparent', color: 'var(--color-text)', cursor: 'pointer',
+                            fontSize: '0.75rem', fontWeight: 600,
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => setDeleteTarget(emp)}
+                          style={{
+                            padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)',
+                            background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer',
+                            fontSize: '0.75rem', fontWeight: 600,
+                          }}
+                        >
+                          Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1980,821 +1365,40 @@ function LabourTab() {
           )}
         </>
       )}
-
-      {/* ── Record Yield Modal (top-level so it works from any sub-view) ── */}
-      {yieldModal && plan && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-          <div style={{
-            background: 'var(--color-surface)', borderRadius: 16, padding: 32,
-            width: '100%', maxWidth: 560, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
-            maxHeight: '90vh', overflowY: 'auto',
-          }}>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 4 }}>
-              Record Actual Yield
-            </div>
-            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
-              {plan.period_start} · {plan.estate_name} — enter harvested kg per block
-            </div>
-
-            {yieldError && (
-              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
-                            color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
-                {yieldError}
-              </div>
-            )}
-
-            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
-              <thead>
-                <tr>
-                  {['Block', 'Group', 'Expected (kg)', 'Actual (kg)'].map(h => (
-                    <th key={h} style={{
-                      textAlign: 'left', padding: '6px 8px', fontSize: '0.75rem',
-                      color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)',
-                      fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em',
-                    }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {plan.assignments.map(a => (
-                  <tr key={a.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                    <td style={{ padding: '10px 8px', fontWeight: 700, fontSize: '0.9rem' }}>{a.block_code}</td>
-                    <td style={{ padding: '10px 8px', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                      {a.group_name || '—'}
-                    </td>
-                    <td style={{ padding: '10px 8px', fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-                      {a.expected_yield_kg != null ? Math.round(a.expected_yield_kg).toLocaleString() : '—'}
-                    </td>
-                    <td style={{ padding: '10px 8px' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.1"
-                        placeholder="e.g. 24500"
-                        value={yieldInputs[a.id] ?? ''}
-                        onChange={e => setYieldInputs(prev => ({ ...prev, [a.id]: e.target.value }))}
-                        style={{
-                          width: '100%', padding: '7px 10px', borderRadius: 6, boxSizing: 'border-box',
-                          border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
-                          color: 'var(--color-text)', fontSize: '0.875rem',
-                        }}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => { setYieldModal(false); setYieldError(''); }}
-                disabled={yieldSaving}
-                style={{
-                  padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
-                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveYield}
-                disabled={yieldSaving}
-                style={{
-                  padding: '8px 24px', borderRadius: 8, border: 'none',
-                  background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600,
-                  opacity: yieldSaving ? 0.7 : 1,
-                }}
-              >
-                {yieldSaving ? 'Saving…' : 'Save Yield'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }
 
-/* ── Tab: Yield Predictions ──────────────────────────────────────────────── */
-function YieldPredictionTab() {
-  const { token } = useAuth();
-  const [estates, setEstates] = useState([]);
-  const [estateId, setEstateId] = useState('');
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(6);
-  const [predictions, setPredictions] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  // Load estates on mount
-  useEffect(() => {
-    if (!token) return;
-    apiService.getEstates(token)
-      .then(data => {
-        setEstates(data);
-        if (data.length > 0) {
-          setEstateId(data[0].id);
-        }
-      })
-      .catch(err => setError('Failed to load estates: ' + err.message));
-  }, [token]);
-
-  // Load predictions when estate/month changes
-  useEffect(() => {
-    if (!token || !estateId) {
-      setPredictions([]);
-      return;
-    }
-    setLoading(true);
-    setError('');
-    const params = { estateId, year, month };
-    apiService.getPredictions(token, params)
-      .then(data => {
-        if (Array.isArray(data)) {
-          setPredictions(data);
-        } else {
-          setPredictions([]);
-          setError('Invalid response format');
-        }
-      })
-      .catch(e => {
-        setError('Error loading predictions: ' + (e.message || 'Unknown error'));
-        setPredictions([]);
-      })
-      .finally(() => setLoading(false));
-  }, [token, estateId, year, month]);
-
-  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const estate = estates.find(e => e.id === estateId);
-
-  // Sort by predicted yield
-  const sortedPredictions = [...predictions].sort((a, b) =>
-    (b.predicted_yield_kg || 0) - (a.predicted_yield_kg || 0)
-  );
-
-  // Calculate summary stats
-  const totalPredicted = predictions.reduce((sum, p) => sum + (p.predicted_yield_kg || 0), 0);
-  const avgPredicted = predictions.length > 0 ? totalPredicted / predictions.length : 0;
-  const maxPredicted = predictions.length > 0 ? Math.max(...predictions.map(p => p.predicted_yield_kg || 0)) : 0;
-  const minPredicted = predictions.length > 0 ? Math.min(...predictions.map(p => p.predicted_yield_kg || 0)) : 0;
-
-  const totalConfidenceLow = predictions.reduce((sum, p) => sum + (p.confidence_low || 0), 0);
-  const totalConfidenceHigh = predictions.reduce((sum, p) => sum + (p.confidence_high || 0), 0);
-  const avgConfidenceRange = totalPredicted > 0
-    ? Math.round(((totalConfidenceHigh - totalConfidenceLow) / totalPredicted) * 100)
-    : 0;
-
-  return (
-    <>
-      {/* ── Controls ── */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 'var(--space-6)' }}>
-        <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Estate
-          </div>
-          <select value={estateId} onChange={e => setEstateId(e.target.value)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem' }}>
-            {estates.length === 0 && <option value="">Loading…</option>}
-            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Month
-          </div>
-          <select value={month} onChange={e => setMonth(parseInt(e.target.value))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem' }}>
-            {MONTH_NAMES.map((name, idx) => <option key={idx} value={idx + 1}>{name}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Year
-          </div>
-          <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} min="2020" max="2030" style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem', width: 80 }} />
-        </div>
-      </div>
-
-      {/* ── Error ── */}
-      {error && (
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
-          {error}
-        </div>
-      )}
-
-      {/* ── Summary Cards ── */}
-      {!loading && predictions.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
-          <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Total Predicted</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{(totalPredicted / 1000).toFixed(1)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>{predictions.length} blocks</div>
-          </div>
-
-          <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Average Per Block</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{(avgPredicted / 1000).toFixed(2)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Mean yield</div>
-          </div>
-
-          <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Range</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-success)' }}>{(maxPredicted / 1000).toFixed(2)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Max: {(maxPredicted / 1000).toFixed(2)}t</div>
-          </div>
-
-          <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Confidence Range</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>±{avgConfidenceRange}%</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Low to High</div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Loading ── */}
-      {loading && (
-        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)' }}>
-          <div style={{ fontSize: '2rem', marginBottom: 12 }}>🔮</div>
-          <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>Predicting yields…</div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>ML model generating forecasts</div>
-        </div>
-      )}
-
-      {/* ── Charts ── */}
-      {!loading && predictions.length > 0 && (
-        <>
-          {/* Bar Chart: Predicted Yield by Block */}
-          <div style={{ marginBottom: 'var(--space-6)' }}>
-            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: 'var(--space-4)' }}>
-              📊 Predicted Yield by Block
-            </div>
-            <div style={{
-              background: 'var(--color-surface-2)',
-              borderRadius: 10,
-              border: '1px solid var(--color-border)',
-              padding: '20px',
-              minHeight: 300,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'flex-end',
-            }}>
-              {/* Simplified Bar Chart */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 250, justifyContent: 'space-around' }}>
-                {sortedPredictions.slice(0, 12).map(pred => {
-                  const maxYield = Math.max(...sortedPredictions.map(p => p.predicted_yield_kg || 0));
-                  const barHeight = (pred.predicted_yield_kg / maxYield) * 220;
-                  const color = pred.predicted_yield_kg > maxYield * 0.7 ? 'var(--color-success)' : 'var(--color-primary)';
-                  return (
-                    <div key={pred.block_id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 }}>
-                      <div title={`${(pred.predicted_yield_kg / 1000).toFixed(2)}t`}
-                        style={{
-                          width: '100%',
-                          height: barHeight,
-                          background: color,
-                          borderRadius: '4px 4px 0 0',
-                          opacity: 0.8,
-                          transition: 'opacity 0.2s',
-                          cursor: 'pointer',
-                        }}
-                        onMouseEnter={e => e.target.style.opacity = 1}
-                        onMouseLeave={e => e.target.style.opacity = 0.8}
-                      />
-                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>
-                        {pred.block_code}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 12, textAlign: 'center' }}>
-                Top 12 blocks by predicted yield (in tonnes)
-              </div>
-            </div>
-          </div>
-
-          {/* Confidence Range Visualization */}
-          <div style={{ marginBottom: 'var(--space-6)' }}>
-            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: 'var(--space-4)' }}>
-              📈 Confidence Ranges (Low to High Estimate)
-            </div>
-            <div style={{
-              background: 'var(--color-surface-2)',
-              borderRadius: 10,
-              border: '1px solid var(--color-border)',
-              padding: '20px',
-            }}>
-              {sortedPredictions.slice(0, 8).map(pred => {
-                const pred_kg = pred.predicted_yield_kg || 0;
-                const low_kg = pred.confidence_low || 0;
-                const high_kg = pred.confidence_high || 0;
-                const maxEstimate = Math.max(...sortedPredictions.map(p => p.confidence_high || 0));
-
-                const predPercent = (pred_kg / maxEstimate) * 100;
-                const lowPercent = (low_kg / maxEstimate) * 100;
-                const highPercent = (high_kg / maxEstimate) * 100;
-
-                return (
-                  <div key={pred.block_id} style={{ marginBottom: 16 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{pred.block_code}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                        {(pred_kg / 1000).toFixed(2)}t
-                      </span>
-                    </div>
-                    <div style={{ position: 'relative', height: 24, background: 'var(--color-surface-3)', borderRadius: 4, overflow: 'hidden' }}>
-                      {/* Low estimate */}
-                      <div style={{
-                        position: 'absolute',
-                        left: 0,
-                        width: `${lowPercent}%`,
-                        height: '100%',
-                        background: 'rgba(34,197,94,0.3)',
-                        borderRadius: 4,
-                      }} />
-                      {/* Predicted */}
-                      <div style={{
-                        position: 'absolute',
-                        left: 0,
-                        width: `${predPercent}%`,
-                        height: '100%',
-                        background: 'var(--color-primary)',
-                        borderRadius: 4,
-                      }} />
-                      {/* High estimate */}
-                      <div style={{
-                        position: 'absolute',
-                        left: `${predPercent}%`,
-                        width: `${highPercent - predPercent}%`,
-                        height: '100%',
-                        background: 'rgba(34,197,94,0.2)',
-                        borderRadius: 4,
-                      }} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                      <span>{(low_kg / 1000).toFixed(2)}t</span>
-                      <span>{(high_kg / 1000).toFixed(2)}t</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* ── Predictions Table ── */}
-      {!loading && predictions.length > 0 && (
-        <div className="table-wrap">
-          <div className="table-header-bar">
-            <div>
-              <div className="table-title">Block Yield Predictions</div>
-              <div className="table-subtitle">{MONTH_NAMES[month - 1]} {year} · {estate?.name}</div>
-            </div>
-            <span className="badge badge-neutral">{predictions.length} blocks</span>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Block</th>
-                <th>Predicted Yield (kg)</th>
-                <th>Confidence Range</th>
-                <th>Low Estimate</th>
-                <th>High Estimate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedPredictions.map(pred => {
-                const pred_kg = pred.predicted_yield_kg || 0;
-                const low_kg = pred.confidence_low || 0;
-                const high_kg = pred.confidence_high || 0;
-                const rangePct = low_kg && high_kg ? Math.round(((high_kg - low_kg) / pred_kg) * 100) : 0;
-                return (
-                  <tr key={pred.block_id}>
-                    <td style={{ fontWeight: 600 }}>{pred.block_code}</td>
-                    <td style={{ fontWeight: 700, fontSize: '1rem' }}>
-                      {(pred_kg / 1000).toFixed(2)}t
-                    </td>
-                    <td style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-primary)' }}>
-                      ±{rangePct}%
-                    </td>
-                    <td style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-                      {(low_kg / 1000).toFixed(2)}t
-                    </td>
-                    <td style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-                      {(high_kg / 1000).toFixed(2)}t
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ── Empty State ── */}
-      {!loading && predictions.length === 0 && !error && (
-        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)' }}>
-          <div style={{ fontSize: '2rem', marginBottom: 10 }}>📊</div>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>No predictions for {MONTH_NAMES[month - 1]} {year}</div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            Try a different month or estate, or ensure labour plans have been generated
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ── Tab: Reports ─────────────────────────────────────────────────────── */
-function ReportTab() {
-  const { token, canWrite } = useAuth();
-  const [estates, setEstates]         = useState([]);
-  const [estateId, setEstateId]       = useState('');
-  const [reportMonth, setReportMonth] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
-  const [generating, setGenerating]   = useState(false);
-  const [error, setError]             = useState('');
-  const [done, setDone]               = useState(false);
-
-  useEffect(() => {
-    if (!token) return;
-    apiService.getEstates(token)
-      .then(data => { setEstates(data); if (data.length > 0) setEstateId(data[0].id); })
-      .catch(() => {});
-  }, [token]);
-
-  const handleGenerate = async () => {
-    if (!estateId || !reportMonth) return;
-    const [year, month] = reportMonth.split('-').map(Number);
-    setGenerating(true); setError(''); setDone(false);
-    try {
-      await apiService.downloadPdfReport(token, estateId, year, month);
-      setDone(true);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const sel = {
-    padding: '9px 14px', borderRadius: 8,
-    border: '1px solid var(--color-border)',
-    background: 'var(--color-surface-2)', color: 'var(--color-text)',
-    fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer',
-  };
-
-  const MONTH_NAMES = ['January','February','March','April','May','June',
-                       'July','August','September','October','November','December'];
-  const [yr, mo]    = reportMonth ? reportMonth.split('-').map(Number) : [null, null];
-  const estate      = estates.find(e => e.id === estateId);
-
-  return (
-    <div style={{ maxWidth: 720 }}>
-
-      {/* ── Controls ── */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end',
-                    marginBottom: 'var(--space-6)' }}>
-        <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)',
-                        marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Estate
-          </div>
-          <select
-            value={estateId}
-            onChange={e => { setEstateId(e.target.value); setDone(false); }}
-            disabled={!canWrite}
-            style={{ ...sel, cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7 }}
-          >
-            {estates.length === 0 && <option value="">Loading…</option>}
-            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-        </div>
-
-        <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)',
-                        marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Period
-          </div>
-          <input
-            type="month"
-            value={reportMonth}
-            onChange={e => { setReportMonth(e.target.value); setDone(false); }}
-            style={sel}
-          />
-        </div>
-
-        <button
-          onClick={handleGenerate}
-          disabled={generating || !estateId}
-          style={{
-            padding: '10px 28px', borderRadius: 8, border: 'none', cursor: 'pointer',
-            background: generating ? '#6b7280' : 'var(--color-primary)',
-            color: '#fff', fontWeight: 700, fontSize: '0.9rem',
-            display: 'flex', alignItems: 'center', gap: 8,
-            opacity: !estateId ? 0.5 : 1, alignSelf: 'flex-end',
-          }}
-        >
-          {generating ? (
-            <>
-              <span style={{ display: 'inline-block', width: 14, height: 14,
-                             border: '2px solid rgba(255,255,255,0.4)',
-                             borderTopColor: '#fff', borderRadius: '50%',
-                             animation: 'spin 0.8s linear infinite' }} />
-              Generating PDF…
-            </>
-          ) : '⬇  Download PDF Report'}
-        </button>
-      </div>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-
-      {/* ── Error ── */}
-      {error && (
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)',
-                      color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem',
-                      border: '1px solid rgba(220,38,38,0.2)' }}>
-          {error}
-        </div>
-      )}
-
-      {/* ── Success ── */}
-      {done && (
-        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,0.08)',
-                      color: 'var(--color-success)', marginBottom: 20, fontSize: '0.875rem',
-                      border: '1px solid rgba(22,163,74,0.2)', fontWeight: 600 }}>
-          PDF downloaded — check your downloads folder.
-        </div>
-      )}
-
-      {/* ── Report preview card ── */}
-      {estate && yr && mo && (
-        <div style={{ background: 'var(--color-surface-2)', borderRadius: 14,
-                      border: '1px solid var(--color-border)', overflow: 'hidden',
-                      marginBottom: 'var(--space-6)' }}>
-          {/* gradient header */}
-          <div style={{
-            background: 'linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%)',
-            padding: '22px 24px', color: '#fff',
-          }}>
-            <div style={{ fontSize: '0.75rem', opacity: 0.65, textTransform: 'uppercase',
-                          letterSpacing: '0.1em', marginBottom: 6 }}>
-              Estate Performance Report
-            </div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: 2 }}>
-              {estate.name}
-            </div>
-            <div style={{ opacity: 0.75, fontSize: '0.9rem' }}>
-              {estate.region || ''}{estate.region ? ' · ' : ''}{MONTH_NAMES[mo - 1]} {yr}
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* ── Loading overlay card ── */}
-      {generating && (
-        <div style={{ padding: 40, textAlign: 'center', background: 'var(--color-surface-2)',
-                      borderRadius: 14, border: '1px solid var(--color-border)' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>📄</div>
-          <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 6 }}>
-            Building your report…
-          </div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            Fetching data, rendering charts and assembling PDF. This takes a few seconds.
-          </div>
-        </div>
-      )}
-
-      {/* ── Idle state ── */}
-      {!generating && !estate && (
-        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)',
-                      borderRadius: 14, border: '1px solid var(--color-border)',
-                      color: 'var(--color-text-muted)' }}>
-          <div style={{ fontSize: '2.5rem', marginBottom: 10 }}>📄</div>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>Select an estate and period</div>
-          <div style={{ fontSize: '0.875rem' }}>then click Download PDF Report</div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ── Tab: Estates & Blocks ────────────────────────────────────── */
-function EstateBlocksTab() {
-  const { token, canWrite, isManager } = useAuth();
-  const [estates, setEstates] = useState([]);
-  const [selectedEstate, setSelectedEstate] = useState(null);
-  const [blocks, setBlocks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [editingEstate, setEditingEstate] = useState(null);
-  const [editingBlock, setEditingBlock] = useState(null);
-  const [estateForm, setEstateForm] = useState({ name: '', region: '' });
-  const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
-  const [saving, setSaving] = useState(false);
-  const stateOptions = ['preparation', 'planting', 'growing', 'harvesting', 'fallow', 'maintenance', 'active'];
-
-  useEffect(() => {
-    if (!token) return;
-    setLoading(true);
-    apiService.getEstates(token).then(data => { setEstates(data || []); if (data.length > 0) setSelectedEstate(data[0]); }).catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, [token]);
-
-  useEffect(() => {
-    if (!token || !selectedEstate) return;
-    apiService.getBlocks(token, selectedEstate.id).then(data => setBlocks(data || [])).catch(e => setError(e.message));
-  }, [token, selectedEstate]);
-
-  const handleSaveEstate = async () => {
-    if (!estateForm.name || !estateForm.region) { setError('Name and region required'); return; }
-    setSaving(true);
-    try {
-      if (editingEstate && editingEstate !== 'new') {
-        await apiService.updateEstate(token, editingEstate.id, estateForm);
-      } else {
-        await apiService.createEstate(token, estateForm);
-      }
-      setEditingEstate(null); setEstateForm({ name: '', region: '' });
-      const updated = await apiService.getEstates(token);
-      setEstates(updated); setError('');
-      if (editingEstate === 'new' && updated.length > 0) setSelectedEstate(updated[updated.length - 1]);
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
-
-  const handleDeleteEstate = async (estateId) => {
-    if (!confirm('Delete estate & all blocks/employees/plans?')) return;
-    try {
-      await apiService.deleteEstate(token, estateId);
-      const updated = await apiService.getEstates(token);
-      setEstates(updated);
-      if (selectedEstate?.id === estateId) setSelectedEstate(updated[0] || null);
-    } catch (e) { setError(e.message); }
-  };
-
-  const handleSaveBlock = async () => {
-    if (!blockForm.block_code) { setError('Block code required'); return; }
-    setSaving(true);
-    try {
-      if (editingBlock && editingBlock !== 'new') {
-        await apiService.updateBlock(token, editingBlock.id, blockForm);
-      } else {
-        await apiService.createBlock(token, { estate_id: selectedEstate.id, ...blockForm });
-      }
-      setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
-      const updated = await apiService.getBlocks(token, selectedEstate.id);
-      setBlocks(updated); setError('');
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
-
-  const handleDeleteBlock = async (blockId) => {
-    if (!confirm('Delete block?')) return;
-    try {
-      await apiService.deleteBlock(token, blockId);
-      const updated = await apiService.getBlocks(token, selectedEstate.id);
-      setBlocks(updated);
-    } catch (e) { setError(e.message); }
-  };
-
-  return (
-    <>
-      {error && <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 'var(--space-4)' }}>{error}</div>}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-5)' }}>
-        {/* Estates Panel */}
-        <div className="table-wrap">
-          <div className="table-header-bar"><div><div className="table-title">Estates</div><div className="table-subtitle">{estates.length} total</div></div></div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 'var(--space-4)' }}>
-            {(canWrite || isManager) && (
-              <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', width: '100%' }}>+ New Estate</button>
-            )}
-            {editingEstate && (
-              <div style={{ padding: 'var(--space-3)', background: 'var(--color-surface)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
-                <input type="text" placeholder="Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
-                <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Cancel</button>
-                  <button onClick={handleSaveEstate} disabled={saving} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? '...' : 'Save'}</button>
-                </div>
-              </div>
-            )}
-            {loading ? <div style={{ padding: 'var(--space-4)', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Loading…</div> : (
-              estates.map(e => (
-                <div key={e.id} style={{ padding: 'var(--space-3)', borderRadius: 6, border: selectedEstate?.id === e.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)', background: selectedEstate?.id === e.id ? 'var(--color-surface-2)' : 'transparent', cursor: 'pointer' }}>
-                  <div onClick={() => setSelectedEstate(e)} style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>{e.name}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 6 }}>{e.region} • {e.block_count || 0} blocks</div>
-                  {(canWrite || isManager) && (
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Edit</button>
-                      <button onClick={() => handleDeleteEstate(e.id)} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Del</button>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Blocks Panel */}
-        <div>
-          {selectedEstate && (
-            <>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 'var(--space-5)' }}>
-                <div><div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>SELECTED</div><div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-text)' }}>{selectedEstate.name}</div></div>
-                {(canWrite || isManager) && (
-                  <button onClick={() => { setEditingBlock('new'); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ marginLeft: 'auto', padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>+ New Block</button>
-                )}
-              </div>
-
-              {editingBlock && (
-                <div className="section-card" style={{ marginBottom: 'var(--space-5)' }}>
-                  <div className="section-card-header"><div className="section-card-title">{editingBlock === 'new' ? 'Create Block' : 'Edit Block'}</div></div>
-                  <div className="section-card-body">
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 'var(--space-4)' }}>
-                      <input type="text" placeholder="Block Code" value={blockForm.block_code} onChange={e => setBlockForm(p => ({ ...p, block_code: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-                      <input type="text" placeholder="Soil Type" value={blockForm.soil_type} onChange={e => setBlockForm(p => ({ ...p, soil_type: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-                      <input type="text" placeholder="Growth Stage" value={blockForm.growth_stage} onChange={e => setBlockForm(p => ({ ...p, growth_stage: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-                      <input type="number" step="0.01" placeholder="Area (hectares)" value={blockForm.area_hectares} onChange={e => setBlockForm(p => ({ ...p, area_hectares: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem' }} />
-                      <select value={blockForm.state} onChange={e => setBlockForm(p => ({ ...p, state: e.target.value }))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.875rem', gridColumn: '1 / -1' }}>
-                        {stateOptions.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                      <button onClick={() => { setEditingBlock(null); setBlockForm({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' }); }} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
-                      <button onClick={handleSaveBlock} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="table-wrap">
-                <div className="table-header-bar"><div><div className="table-title">Blocks</div><div className="table-subtitle">{blocks.length} blocks</div></div></div>
-                {blocks.length === 0 ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No blocks. Create one to get started!</div> : (
-                  <table>
-                    <thead><tr><th>Code</th><th>Soil</th><th>Stage</th><th>Area (ha)</th><th>State</th>{(canWrite || isManager) && <th>Actions</th>}</tr></thead>
-                    <tbody>{blocks.map(b => (
-                      <tr key={b.id}><td style={{ fontWeight: 600 }}>{b.block_code}</td><td>{b.soil_type || '—'}</td><td>{b.growth_stage || '—'}</td><td>{b.area_hectares || '—'}</td><td><span className={`badge badge-${b.state === 'active' ? 'success' : b.state === 'harvesting' ? 'warning' : 'neutral'}`}>{b.state.charAt(0).toUpperCase() + b.state.slice(1)}</span></td>
-                      {(canWrite || isManager) && <td style={{ display: 'flex', gap: 6 }}><button onClick={() => { setEditingBlock(b); setBlockForm(b); }} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Edit</button><button onClick={() => handleDeleteBlock(b.id)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Delete</button></td>}
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
-
-
+/* ── Nav Items Config ─────────────────────────────────────────────────── */
 const navItems = [
   { id: 'overview',    icon: '🏠', label: 'Overview' },
-  { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
   { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
   { id: 'water',       icon: '💧', label: 'Water Efficiency' },
   { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
   { id: 'labour',      icon: '👥', label: 'Labour Planner' },
-  { id: 'predictions', icon: '🔮', label: 'Yield Predictions' },
-  { id: 'reports',     icon: '📄', label: 'Reports' },
 ];
 
 const tabTitles = {
   overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
-  'estate-blocks': { title: 'Estates & Blocks',  sub: 'Manage all estates and their plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
   fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
-  labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
-  predictions: { title: 'Yield Predictions',  sub: 'ML model forecasts for each block & month' },
-  reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
+  labour:     { title: 'Labour Planner',      sub: 'Weekly worker allocation & production targets' },
 };
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, loading, logout } = useAuth();
+  const { user, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
-    // Wait until auth has finished restoring/verifying the stored token
-    // before deciding the user is unauthenticated — otherwise a refresh
-    // redirects to login before the localStorage token is loaded.
-    if (!loading && !isAuthenticated) {
+    if (!isAuthenticated) {
       router.push('/auth/login');
     }
-  }, [loading, isAuthenticated, router]);
+  }, [isAuthenticated, router]);
 
-  if (loading || !isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center', color: 'var(--color-text-muted)' }}>
@@ -2813,7 +1417,7 @@ export default function DashboardPage() {
       {/* ── Sidebar ──────────────────────────────────────────── */}
       <aside className="dash-sidebar">
         <div className="dash-sidebar-logo">
-          <img src="/logo.png" alt="KVPL Logo" className="dash-sidebar-logo-mark" style={{ width: '40px', height: '40px', objectFit: 'contain' }} />
+          <div className="dash-sidebar-logo-mark">🌿</div>
           <div className="dash-sidebar-brand">
             KVPL
             <small>Plantation System</small>
@@ -2837,9 +1441,27 @@ export default function DashboardPage() {
               )}
             </button>
           ))}
+
+          <div className="dash-nav-label" style={{ marginTop: 'var(--space-4)' }}>Estates</div>
+          {estates.map(e => (
+            <div key={e.id} className="dash-nav-item" style={{ cursor: 'default', fontSize: '0.875rem' }}>
+              <span className="dash-nav-icon" style={{ fontSize: '0.875rem' }}>🏡</span>
+              {e.name}
+              <span className="dash-nav-badge" style={{ background: 'rgba(255,255,255,0.1)' }}>#{e.rank}</span>
+            </div>
+          ))}
         </nav>
 
-        
+        <div className="dash-sidebar-footer">
+          <button
+            className="dash-nav-item"
+            onClick={logout}
+            style={{ color: 'rgba(255,100,100,0.8)' }}
+          >
+            <span className="dash-nav-icon">🚪</span>
+            Sign Out
+          </button>
+        </div>
       </aside>
 
       {/* ── Main Area ────────────────────────────────────────── */}
@@ -2860,19 +1482,6 @@ export default function DashboardPage() {
                 <span className="badge badge-neutral" style={{ fontSize: '0.6875rem' }}>{user.role}</span>
               )}
             </div>
-            <button
-              onClick={logout}
-              title="Sign out"
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '7px 14px', borderRadius: 8,
-                border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
-                color: 'var(--color-danger)', fontWeight: 600, fontSize: '0.8125rem',
-                cursor: 'pointer',
-              }}
-            >
-               Sign Out
-            </button>
           </div>
         </header>
 
@@ -2884,13 +1493,10 @@ export default function DashboardPage() {
           </div>
 
           {activeTab === 'overview'    && <OverviewTab />}
-          {activeTab === 'estate-blocks' && <EstateBlocksTab />}
           {activeTab === 'roi'         && <ROITab />}
           {activeTab === 'water'       && <WaterTab />}
           {activeTab === 'fertilizer'  && <FertilizerTab />}
           {activeTab === 'labour'      && <LabourTab />}
-          {activeTab === 'predictions' && <YieldPredictionTab />}
-          {activeTab === 'reports'     && <ReportTab />}
         </main>
       </div>
     </div>

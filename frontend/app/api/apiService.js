@@ -4,14 +4,21 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
-const TOKEN_REFRESH_THRESHOLD = 3600;
+// Token refresh threshold (refresh if expires in less than 1 hour)
+const TOKEN_REFRESH_THRESHOLD = 3600; // 1 hour in seconds
 
+// Global 401 handler - registered by AuthContext to trigger logout
 let _onUnauthorized = null;
-export const setOnUnauthorized = (fn) => { _onUnauthorized = fn; };
+export function setOnUnauthorized(callback) {
+  _onUnauthorized = callback;
+}
+function _handleUnauthorized() {
+  if (_onUnauthorized) _onUnauthorized();
+}
 
 export const apiService = {
   // Auth endpoints
-  async signup(email, password, fullName, role, estateId) {
+  async signup(email, password, fullName) {
     try {
       const response = await fetch(`${API_BASE}/auth/signup`, {
         method: 'POST',
@@ -20,8 +27,6 @@ export const apiService = {
           email,
           password,
           full_name: fullName,
-          role,
-          estate_id: estateId || null,
         }),
       });
 
@@ -34,13 +39,6 @@ export const apiService = {
     } catch (error) {
       throw error;
     }
-  },
-
-  // Public (unauthenticated) estate list for the signup estate selector
-  async getPublicEstates() {
-    const response = await fetch(`${API_BASE}/estates/public`);
-    if (!response.ok) throw new Error('Failed to load estates');
-    return await response.json();
   },
 
   async login(email, password) {
@@ -151,12 +149,9 @@ export const apiService = {
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}/labour${path}`, opts);
-    if (res.status === 401) {
-      if (_onUnauthorized) _onUnauthorized();
-      throw new Error('Session expired. Please log in again.');
-    }
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    if (res.status === 401) _handleUnauthorized();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`)
     return json;
   },
 
@@ -164,39 +159,11 @@ export const apiService = {
     return this._labour(token, 'GET', '/estates');
   },
 
-  createEstate(token, data) {
-    return this._labour(token, 'POST', '/estates', data);
-  },
-
-  updateEstate(token, estateId, data) {
-    return this._labour(token, 'PUT', `/estates/${estateId}`, data);
-  },
-
-  deleteEstate(token, estateId) {
-    return this._labour(token, 'DELETE', `/estates/${estateId}`);
-  },
-
-  getLabourPlans(token, { estateId, monthStart } = {}) {
+  getLabourPlans(token, { estateId, weekStart } = {}) {
     const q = new URLSearchParams();
-    if (estateId)   q.set('estate_id',    estateId);
-    if (monthStart) q.set('period_start', monthStart);
+    if (estateId)  q.set('estate_id',  estateId);
+    if (weekStart) q.set('week_start', weekStart);
     return this._labour(token, 'GET', `/plans${q.toString() ? '?' + q : ''}`);
-  },
-
-  generateMonthlyPlans(token, { year, month, estateId } = {}) {
-    const body = {};
-    if (year)     body.year = year;
-    if (month)    body.month = month;
-    if (estateId) body.estate_id = estateId;
-    return this._labour(token, 'POST', '/plans/generate-monthly', body);
-  },
-
-  getPredictions(token, { estateId, year, month } = {}) {
-    const q = new URLSearchParams();
-    if (estateId) q.set('estate_id', estateId);
-    if (year)     q.set('year',  year);
-    if (month)    q.set('month', month);
-    return this._labour(token, 'GET', `/predictions${q.toString() ? '?' + q : ''}`);
   },
 
   getLabourPlan(token, planId) {
@@ -211,28 +178,8 @@ export const apiService = {
     return this._labour(token, 'PUT', `/plans/${planId}`, data);
   },
 
-  createManualPlan(token, data) {
-    return this._labour(token, 'POST', '/plans/manual/create', data);
-  },
-
-  addAssignmentToPlan(token, planId, data) {
-    return this._labour(token, 'POST', `/plans/${planId}/assignments/add`, data);
-  },
-
   overrideAssignment(token, assignmentId, data) {
     return this._labour(token, 'PUT', `/assignments/${assignmentId}`, data);
-  },
-
-  changeGroupAssignment(token, assignmentId, workerGroupId) {
-    return this._labour(token, 'PUT', `/assignments/${assignmentId}/change-group`, { worker_group_id: workerGroupId });
-  },
-
-  removeAssignment(token, assignmentId) {
-    return this._labour(token, 'DELETE', `/assignments/${assignmentId}/remove`);
-  },
-
-  removeGroupFromAssignment(token, assignmentId) {
-    return this._labour(token, 'PUT', `/assignments/${assignmentId}/remove-group`);
   },
 
   addEmployeeOverride(token, assignmentId, data) {
@@ -273,63 +220,6 @@ export const apiService = {
     return this._labour(token, 'GET', `/rotation${q}`);
   },
 
-  // Block management
-  getBlocks(token, estateId) {
-    const q = estateId ? `?estate_id=${estateId}` : '';
-    return this._labour(token, 'GET', `/blocks${q}`);
-  },
-
-  createBlock(token, data) {
-    return this._labour(token, 'POST', '/blocks', data);
-  },
-
-  updateBlock(token, blockId, data) {
-    return this._labour(token, 'PUT', `/blocks/${blockId}`, data);
-  },
-
-  deleteBlock(token, blockId) {
-    return this._labour(token, 'DELETE', `/blocks/${blockId}`);
-  },
-
-  recordPlanYield(token, planId, yields) {
-    return this._labour(token, 'POST', `/plans/${planId}/record-yield`, { yields });
-  },
-
-  getPlanEfficiency(token, planId) {
-    return this._labour(token, 'GET', `/plans/${planId}/efficiency`);
-  },
-
-  async downloadPdfReport(token, estateId, year, month) {
-    const res = await fetch(`${API_BASE}/reports/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ estate_id: estateId, year, month }),
-    });
-    if (res.status === 401) {
-      if (_onUnauthorized) _onUnauthorized();
-      throw new Error('Session expired. Please log in again.');
-    }
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      throw new Error(json.error || `Report generation failed (${res.status})`);
-    }
-    const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
-    const cd   = res.headers.get('content-disposition') || '';
-    const name = cd.match(/filename="?([^"]+)"?/)?.[1]
-                 || `KVPL_Report_${year}_${String(month).padStart(2,'0')}.pdf`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  },
-
 
   // ── Water Efficiency ──────────────────────────────────────────────────────
 
@@ -340,12 +230,9 @@ export const apiService = {
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}/water${path}`, opts);
-    if (res.status === 401) {
-      if (_onUnauthorized) _onUnauthorized();
-      throw new Error('Session expired. Please log in again.');
-    }
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    if (res.status === 401) _handleUnauthorized();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`)
     return json;
   },
 
@@ -382,12 +269,12 @@ export const apiService = {
     const opts = {
       method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      credentials: 'include',
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}/roi${path}`, opts);
     const json = await res.json();
-    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    if (res.status === 401) _handleUnauthorized();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`)
     return json;
   },
 
@@ -415,29 +302,22 @@ export const apiService = {
     return this._roi(token, 'POST', '/yield-records', data);
   },
 
-  getROISummary(token, params = {}) {
-  const qs = new URLSearchParams();
-  if (params.months) qs.set('months', params.months);
-  if (params.year)   qs.set('year',   params.year);
-  if (params.month)  qs.set('month',  params.month);
-  return this._roi(token, 'GET', `/summary${qs.toString() ? '?' + qs : ''}`);
-},
+  getROISummary(token, { year, month } = {}) {
+    const q = new URLSearchParams();
+    if (year) q.set('year', year);
+    if (month) q.set('month', month);
+    return this._roi(token, 'GET', `/summary${q.toString() ? '?' + q : ''}`);
+  },
 
-  getROIRankings(token, params = {}) {
-    const qs = new URLSearchParams();
-    if (params.months) qs.set('months', params.months);
-    if (params.year)   qs.set('year',   params.year);
-    if (params.month)  qs.set('month',  params.month);
-    return this._roi(token, 'GET', `/rankings${qs.toString() ? '?' + qs : ''}`);
+  getROIRankings(token, { year, month } = {}) {
+    const q = new URLSearchParams();
+    if (year) q.set('year', year);
+    if (month) q.set('month', month);
+    return this._roi(token, 'GET', `/rankings${q.toString() ? '?' + q : ''}`);
   },
 
   getROIEstates(token) {
     return this._roi(token, 'GET', '/estates');
-  },
-
-  getROIEstateTrend(token, estateId, year) {
-    const q = new URLSearchParams({ estate_id: estateId, year });
-    return this._roi(token, 'GET', `/estate-trend?${q}`);
   },
   
   // Helper: Decode JWT token to get expiration time
@@ -446,11 +326,9 @@ export const apiService = {
       const parts = token.split('.');
       if (parts.length !== 3) return null;
 
-      // JWT uses base64url — convert to standard base64 before atob
-      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-      const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
-      const decoded = JSON.parse(atob(padded));
-      return decoded.exp ? decoded.exp * 1000 : null;
+      // Decode the payload (second part)
+      const decoded = JSON.parse(atob(parts[1]));
+      return decoded.exp ? decoded.exp * 1000 : null; // Convert to milliseconds
     } catch (error) {
       return null;
     }

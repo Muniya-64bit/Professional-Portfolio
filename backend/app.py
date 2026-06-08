@@ -9,30 +9,20 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from auth import (
     signup_user, login_user, get_user_profile, token_required,
-    verify_token, validate_password_strength, rate_limit, invalidate_token
+    verify_token, validate_password_strength, rate_limit
 )
 from labour import labour_bp
 from water import water_bp
-from reports import reports_bp
 from roi import roi_bp
-from scheduler import start_scheduler
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Roles a user may self-select at signup (testing convenience).
-ALLOWED_SIGNUP_ROLES = {'admin', 'estate_manager', 'manager'}
-
 app = Flask(__name__)
-CORS(app, 
-     origins=["http://localhost:3000", "http://127.0.0.1:3000"],
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+CORS(app)
 app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
-app.register_blueprint(reports_bp)
 app.register_blueprint(roi_bp)
 
 # Basic routes
@@ -43,23 +33,6 @@ def home():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
-
-@app.route("/api/estates/public", methods=["GET"])
-def public_estates():
-    """Unauthenticated estate list (id + name) for the signup estate selector."""
-    from auth import get_db_connection
-    conn = get_db_connection()
-    if not conn:
-        return jsonify({'error': 'Database unavailable'}), 503
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name FROM estate ORDER BY name")
-            return jsonify([{'id': str(r[0]), 'name': r[1]} for r in cur.fetchall()]), 200
-    except Exception as e:
-        logger.error("public_estates error: %s", e, exc_info=True)
-        return jsonify({'error': 'Failed to load estates'}), 500
-    finally:
-        conn.close()
 
 # Auth routes
 @app.route("/api/auth/signup", methods=["POST"])
@@ -86,18 +59,8 @@ def signup():
     is_strong, message = validate_password_strength(password)
     if not is_strong:
         return jsonify({'error': message}), 400
-
-    # Role selection (testing convenience — lock this down later).
-    role = data.get('role', 'manager')
-    if role not in ALLOWED_SIGNUP_ROLES:
-        return jsonify({'error': 'Invalid role'}), 400
-
-    # A manager is scoped to one estate, so they must be assigned one.
-    estate_id = data.get('estate_id')
-    if role == 'manager' and not estate_id:
-        return jsonify({'error': 'estate_id is required for the manager role'}), 400
-
-    result, status = signup_user(email, password, full_name, role=role, estate_id=estate_id)
+    
+    result, status = signup_user(email, password, full_name, role='estate_manager')
     return jsonify(result), status
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -121,14 +84,10 @@ def login():
 @app.route("/api/auth/verify", methods=["POST"])
 @token_required
 def verify():
-    """Verify token validity and return full user profile."""
-    user_id = request.user.get('user_id')
-    result, status = get_user_profile(user_id)
-    if status != 200:
-        return jsonify({'error': 'User not found'}), 401
+    """Verify token validity."""
     return jsonify({
         'message': 'Token is valid',
-        'user': result['user']
+        'user': request.user
     }), 200
 
 @app.route("/api/auth/profile", methods=["GET"])
@@ -146,10 +105,8 @@ def refresh():
     from auth import generate_token
     user_id = request.user.get('user_id')
     email = request.user.get('email')
-    role = request.user.get('role')
-    estate_id = request.user.get('estate_id')
-
-    new_token = generate_token(user_id, email, role, estate_id)
+    
+    new_token = generate_token(user_id, email)
     return jsonify({
         'message': 'Token refreshed successfully',
         'token': new_token
@@ -158,16 +115,10 @@ def refresh():
 @app.route("/api/auth/logout", methods=["POST"])
 @token_required
 def logout():
-    """Logout user and blacklist the token."""
-    invalidate_token(request.token)
+    """Logout user (token invalidation handled on client side)."""
     return jsonify({
         'message': 'Logged out successfully'
     }), 200
 
 if __name__ == "__main__":
-    # Under the debug reloader the parent process has WERKZEUG_RUN_MAIN unset and
-    # only watches files; the worker sets it to 'true'. Start the scheduler only
-    # in the worker so the monthly job isn't registered twice.
-    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-        start_scheduler()
     app.run(host="0.0.0.0", port=5000, debug=True)
