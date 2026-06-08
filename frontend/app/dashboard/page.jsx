@@ -983,7 +983,10 @@ function LabourTab() {
                                   style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-primary)', background: 'var(--color-surface)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 120 }}
                                 >
                                   <option value="">Select group…</option>
-                                  {groups.map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)}
+                                  {groups
+                                    .filter(g => !assignments.some(ax => ax.worker_group_id === g.id))
+                                    .map(g => <option key={g.id} value={g.id}>{g.group_name}</option>)
+                                  }
                                 </select>
                                 <button onClick={() => setAddingGroup(null)} style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
                               </div>

@@ -365,6 +365,7 @@ def get_plan(plan_id):
 
             cur.execute("""
                 SELECT ba.id, b.block_code, b.worker_capacity,
+                       wg.id AS worker_group_id,
                        wg.group_name, wg.group_code, wg.capacity AS group_capacity,
                        ba.assignment_date, ba.rotation_round, ba.is_manual_override,
                        ba.expected_yield_kg, ba.actual_yield_kg,
