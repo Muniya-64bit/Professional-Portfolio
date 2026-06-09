@@ -339,6 +339,118 @@ export const apiService = {
   },
 
 
+  // ── Fertilizer Planner ───────────────────────────────────────────────────
+
+  async _fertilizer(token, method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}/fertilizer${path}`, opts);
+    if (res.status === 401) {
+      if (_onUnauthorized) _onUnauthorized();
+      throw new Error('Session expired. Please log in again.');
+    }
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
+  },
+
+  getFertilizerAlerts(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._fertilizer(token, 'GET', `/alerts${q}`);
+  },
+
+  // ── Schedule headers ─────────────────────────────────────────────────────
+  getFertilizerSchedules(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._fertilizer(token, 'GET', `/schedules${q}`);
+  },
+
+  generateFertilizerScheduleForMonth(token, { estate_id, period_start }) {
+    return this._fertilizer(token, 'POST', '/schedules/generate', { estate_id, period_start });
+  },
+
+  deleteFertilizerSchedule(token, scheduleId) {
+    return this._fertilizer(token, 'DELETE', `/schedules/${scheduleId}`);
+  },
+
+  // ── Schedule entries ─────────────────────────────────────────────────────
+  getFertilizerScheduleEntries(token, scheduleId, { blockId, status, limit } = {}) {
+    const q = new URLSearchParams();
+    if (blockId) q.set('block_id', blockId);
+    if (status)  q.set('status', status);
+    if (limit)   q.set('limit', limit);
+    return this._fertilizer(token, 'GET', `/schedules/${scheduleId}/entries${q.toString() ? '?' + q : ''}`);
+  },
+
+  updateFertilizerScheduleEntry(token, entryId, data) {
+    return this._fertilizer(token, 'PUT', `/entries/${entryId}`, data);
+  },
+
+  // legacy: single-estate fetch (most recent active schedule entries)
+  getFertilizerSchedule(token, { estateId, blockId, status, limit } = {}) {
+    const q = new URLSearchParams();
+    if (estateId) q.set('estate_id', estateId);
+    if (blockId)  q.set('block_id', blockId);
+    if (status)   q.set('status', status);
+    if (limit)    q.set('limit', limit);
+    return this._fertilizer(token, 'GET', `/schedule${q.toString() ? '?' + q : ''}`);
+  },
+
+  // legacy generate alias
+  generateFertilizerSchedule(token, estateId) {
+    return this._fertilizer(token, 'POST', '/generate', { estate_id: estateId });
+  },
+
+  getFertilizerProgramme(token, estateId) {
+    const q = estateId ? `?estate_id=${estateId}` : '';
+    return this._fertilizer(token, 'GET', `/programme${q}`);
+  },
+
+  getFertilizerTypes(token) {
+    return this._fertilizer(token, 'GET', '/types');
+  },
+
+  createFertilizerType(token, data) {
+    return this._fertilizer(token, 'POST', '/types', data);
+  },
+
+  updateFertilizerType(token, id, data) {
+    return this._fertilizer(token, 'PUT', `/types/${id}`, data);
+  },
+
+  recordFertilizerApplication(token, data) {
+    return this._fertilizer(token, 'POST', '/applications', data);
+  },
+
+  getFertilizerApplications(token, { estateId, blockId, limit } = {}) {
+    const q = new URLSearchParams();
+    if (estateId) q.set('estate_id', estateId);
+    if (blockId)  q.set('block_id', blockId);
+    if (limit)    q.set('limit', limit);
+    return this._fertilizer(token, 'GET', `/applications${q.toString() ? '?' + q : ''}`);
+  },
+
+  getFertilizerHistory(token, blockId, limit) {
+    const q = new URLSearchParams({ block_id: blockId });
+    if (limit) q.set('limit', limit);
+    return this._fertilizer(token, 'GET', `/history?${q}`);
+  },
+
+  createFertilizerProgrammeStep(token, data) {
+    return this._fertilizer(token, 'POST', '/programme', data);
+  },
+
+  updateFertilizerProgrammeStep(token, id, data) {
+    return this._fertilizer(token, 'PUT', `/programme/${id}`, data);
+  },
+
+  deleteFertilizerProgrammeStep(token, id) {
+    return this._fertilizer(token, 'DELETE', `/programme/${id}`);
+  },
+
   // ── Water Efficiency ──────────────────────────────────────────────────────
 
   async _water(token, method, path, body) {

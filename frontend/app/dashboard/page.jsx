@@ -16,19 +16,6 @@ const estates = [
 ];
 
 
-const fertilizerBlocks = [
-  { block: 'A1', estate: 'Kelani Valley', daysSince: 28, recommended: 'Urea 25kg', status: 'due' },
-  { block: 'A2', estate: 'Kelani Valley', daysSince: 52, recommended: 'NPK 20kg',  status: 'overdue' },
-  { block: 'A3', estate: 'Kelani Valley', daysSince: 12, recommended: 'MOP 15kg',  status: 'ok' },
-  { block: 'B1', estate: 'Nuwara Eliya',  daysSince: 61, recommended: 'Urea 30kg', status: 'overdue' },
-  { block: 'B2', estate: 'Nuwara Eliya',  daysSince: 5,  recommended: 'NPK 25kg',  status: 'ok' },
-  { block: 'B3', estate: 'Nuwara Eliya',  daysSince: 33, recommended: 'Urea 20kg', status: 'due' },
-  { block: 'C1', estate: 'Uva Highlands', daysSince: 44, recommended: 'NPK 20kg',  status: 'due' },
-  { block: 'C2', estate: 'Uva Highlands', daysSince: 8,  recommended: 'MOP 18kg',  status: 'ok' },
-  { block: 'D1', estate: 'Ratnapura',     daysSince: 70, recommended: 'Urea 35kg', status: 'overdue' },
-  { block: 'D2', estate: 'Ratnapura',     daysSince: 18, recommended: 'NPK 22kg',  status: 'ok' },
-  { block: 'D3', estate: 'Ratnapura',     daysSince: 38, recommended: 'Urea 28kg', status: 'due' },
-];
 
 const labourData = [
   { block: 'A1', estate: 'Kelani Valley', workers: 14, target: 550, actual: 532, efficiency: 96.7 },
@@ -104,10 +91,24 @@ function StatusBadge({ status }) {
 
 /* ── Tab: Overview ────────────────────────────────────────────────────── */
 function OverviewTab() {
+  const { token } = useAuth();
   const totalProd = labourData.reduce((s, r) => s + r.actual, 0);
   const avgCost = Math.round(estates.reduce((s, e) => s + e.costPerKg, 0) / estates.length);
   const activeWorkers = labourData.reduce((s, r) => s + r.workers, 0);
   const avgWater = 'N/A';
+  const [fertAlerts, setFertAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getFertilizerAlerts(token).catch(() => []).then(data => setFertAlerts(Array.isArray(data) ? data : []));
+  }, [token]);
+
+  const fertOverdue = fertAlerts.filter(a => a.status === 'overdue');
+  const fertDue = fertAlerts.filter(a => a.status === 'due');
+  const fertAttention = [...fertOverdue, ...fertDue];
+
+  const fertStatusMap = { pending: 'ok', due: 'due', overdue: 'overdue' };
+
   return (
     <>
       {/* KPI Cards */}
@@ -179,29 +180,53 @@ function OverviewTab() {
             <div className="section-card-title-icon">🌱</div>
             Fertilizer Alerts
           </div>
-          <span className="badge badge-danger">
-            {fertilizerBlocks.filter(b => b.status === 'overdue').length} Overdue
-          </span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {fertOverdue.length > 0 && <span className="badge badge-danger">{fertOverdue.length} Overdue</span>}
+            {fertDue.length > 0 && <span className="badge badge-warning">{fertDue.length} Due</span>}
+            {fertAttention.length === 0 && fertAlerts.length > 0 && <span className="badge badge-success">All Clear</span>}
+          </div>
         </div>
         <div className="section-card-body">
-          <div className="alert alert-warning" style={{ marginBottom: 'var(--space-4)' }}>
-            <span>⚠️</span>
-            <span><strong>{fertilizerBlocks.filter(b => b.status === 'overdue').length} blocks</strong> are overdue for fertilizer application. Immediate action recommended.</span>
-          </div>
-          <div className="block-grid">
-            {fertilizerBlocks.filter(b => b.status !== 'ok').map(b => (
-              <div key={b.block} className={`block-card status-${b.status}`}>
-                <div className="block-name">{b.block}</div>
-                <div className="block-estate">{b.estate}</div>
-                <div className="block-days">{b.daysSince}</div>
-                <div className="block-days-label">days since last</div>
-                <StatusBadge status={b.status} />
-                <div style={{ marginTop: 'var(--space-3)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                  Rec: {b.recommended}
-                </div>
-              </div>
-            ))}
-          </div>
+          {fertAttention.length === 0 ? (
+            <p style={{ padding: '0.5rem 0', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+              {fertAlerts.length > 0 ? 'No overdue or due blocks — all on schedule.' : 'No schedule data yet. Generate a plan in the Fertilizer Rotation tab.'}
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {fertAttention.map(a => {
+                const isOverdue = a.status === 'overdue';
+                const accentColor = isOverdue ? 'var(--color-danger)' : 'var(--color-warning)';
+                const bgColor = isOverdue ? 'rgba(220,38,38,0.04)' : 'rgba(245,158,11,0.04)';
+                const days = Math.abs(a.days_overdue ?? 0);
+                return (
+                  <div key={a.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 14px',
+                    borderRadius: 8,
+                    background: bgColor,
+                    border: `1px solid ${isOverdue ? 'rgba(220,38,38,0.15)' : 'rgba(245,158,11,0.15)'}`,
+                    borderLeft: `3px solid ${accentColor}`,
+                  }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--color-text)' }}>{a.block_code}</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{a.estate}</span>
+                      </div>
+                      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                        {a.fertilizer}{a.total_kg_needed ? ` · ${Number(a.total_kg_needed).toFixed(0)} kg needed` : ''}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem', color: accentColor }}>
+                        {isOverdue ? `${days} days overdue` : days === 0 ? 'Due' : `Due in ${days} days`}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{a.due_date}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -1205,54 +1230,546 @@ function WaterTab() {
 }
 
 /* ── Tab: Fertilizer ──────────────────────────────────────────────────── */
-function FertilizerTab() {
-  const overdueCount = fertilizerBlocks.filter(b => b.status === 'overdue').length;
-  const dueCount = fertilizerBlocks.filter(b => b.status === 'due').length;
+function FertilizerTab({ onOverdueChange }) {
+  const { token, canWrite } = useAuth();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const [estates, setEstates] = useState([]);
+  const [estateId, setEstateId] = useState('');
+  const [alerts, setAlerts] = useState([]);
+  const [schedules, setSchedules] = useState([]);
+  const [selectedScheduleId, setSelectedScheduleId] = useState('');
+  const [schedule, setSchedule] = useState([]);
+  const [scheduleStatus, setScheduleStatus] = useState('due,overdue');
+  const [selectedBlock, setSelectedBlock] = useState('');
+  const [subTab, setSubTab] = useState('schedule'); // 'schedule' | 'history'
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+  const [genResult, setGenResult] = useState(null);
+
+  // Application history — lazy loaded when history tab is first opened
+  const [applications, setApplications] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  // Application modal
+  const [fertTypes, setFertTypes] = useState([]);
+  const [blocks, setBlocks] = useState([]);
+  const [appModal, setAppModal] = useState(null); // null | { mode:'done', entry } | { mode:'manual' }
+  const [appForm, setAppForm] = useState({});
+  const [appSaving, setAppSaving] = useState(false);
+  const [appError, setAppError] = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    Promise.all([
+      apiService.getEstates(token),
+      apiService.getFertilizerTypes(token),
+    ]).then(([estData, typeData]) => {
+      setEstates(estData);
+      if (estData.length > 0) setEstateId(estData[0].id);
+      setFertTypes(Array.isArray(typeData) ? typeData : []);
+    }).catch(() => {});
+  }, [token]);
+
+  // On estate change: fetch alerts + schedule headers + blocks in parallel
+  useEffect(() => {
+    if (!token || !estateId) return;
+    setLoading(true);
+    setError('');
+    setSubTab('schedule');
+    setHistoryLoaded(false);
+    setApplications([]);
+    setSchedules([]);
+    setSelectedScheduleId('');
+    setSchedule([]);
+    Promise.all([
+      apiService.getFertilizerAlerts(token, estateId),
+      apiService.getFertilizerSchedules(token, estateId),
+      apiService.getBlocks(token, estateId),
+    ])
+      .then(([a, hdrs, b]) => {
+        const blockList  = Array.isArray(b)    ? b    : [];
+        const alertList  = Array.isArray(a)    ? a    : [];
+        const hdrList    = Array.isArray(hdrs) ? hdrs : [];
+        setAlerts(alertList);
+        setBlocks(blockList);
+        setSelectedBlock(blockList.length > 0 ? blockList[0].id : '');
+        setSchedules(hdrList);
+        const active = hdrList.find(h => h.status === 'active') || hdrList[0];
+        setSelectedScheduleId(active ? active.id : '');
+        if (onOverdueChange) onOverdueChange();
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [token, estateId]);
+
+  // Fetch entries whenever the selected schedule or status filter changes
+  useEffect(() => {
+    if (!token || !selectedScheduleId) { setSchedule([]); return; }
+    apiService.getFertilizerScheduleEntries(token, selectedScheduleId, { status: scheduleStatus || undefined })
+      .then(rows => setSchedule(Array.isArray(rows) ? rows : []))
+      .catch(() => setSchedule([]));
+  }, [token, selectedScheduleId, scheduleStatus]);
+
+  const reload = async () => {
+    const [a, hdrs] = await Promise.all([
+      apiService.getFertilizerAlerts(token, estateId),
+      apiService.getFertilizerSchedules(token, estateId),
+    ]);
+    const alertList = Array.isArray(a)    ? a    : [];
+    const hdrList   = Array.isArray(hdrs) ? hdrs : [];
+    setAlerts(alertList);
+    setSchedules(hdrList);
+    if (onOverdueChange) onOverdueChange();
+    if (selectedScheduleId) {
+      apiService.getFertilizerScheduleEntries(token, selectedScheduleId, { status: scheduleStatus || undefined })
+        .then(rows => setSchedule(Array.isArray(rows) ? rows : []));
+    }
+    if (historyLoaded) {
+      apiService.getFertilizerApplications(token, { estateId, limit: 500 })
+        .then(apps => setApplications(Array.isArray(apps) ? apps : []));
+    }
+  };
+
+  // Lazy-load history when the tab is first opened
+  useEffect(() => {
+    if (subTab !== 'history' || historyLoaded || !token || !estateId) return;
+    setHistoryLoading(true);
+    apiService.getFertilizerApplications(token, { estateId, limit: 500 })
+      .then(apps => { setApplications(Array.isArray(apps) ? apps : []); setHistoryLoaded(true); })
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
+  }, [subTab, token, estateId]);
+
+  const nextMonthStr = (() => {
+    const d = new Date();
+    const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
+    const m = d.getMonth() === 11 ? 1 : d.getMonth() + 2;
+    return `${y}-${String(m).padStart(2, '0')}-01`;
+  })();
+
+  const fmtMonth = iso => {
+    if (!iso) return '';
+    const [y, mo] = iso.split('-');
+    return new Date(y, mo - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+  };
+
+  const handleGenerate = async () => {
+    if (!estateId) return;
+    setGenerating(true); setError(''); setGenResult(null);
+    try {
+      const result = await apiService.generateFertilizerScheduleForMonth(token, {
+        estate_id: estateId,
+        period_start: nextMonthStr,
+      });
+      setGenResult(result);
+      const hdrs = await apiService.getFertilizerSchedules(token, estateId);
+      const hdrList = Array.isArray(hdrs) ? hdrs : [];
+      setSchedules(hdrList);
+      // Stay on current schedule; only select the new one if nothing was selected
+      if (!selectedScheduleId && result.schedule_id) setSelectedScheduleId(result.schedule_id);
+    } catch (e) {
+      if (e.message && e.message.includes('already exists')) {
+        setError(`A schedule for ${fmtMonth(nextMonthStr)} already exists. Manage it in the Fertilizer Schedules tab.`);
+      } else {
+        setError(e.message);
+      }
+    }
+    finally { setGenerating(false); }
+  };
+
+  const handleSkip = async (id) => {
+    try {
+      await apiService.updateFertilizerScheduleEntry(token, id, { status: 'skipped' });
+      await reload();
+    } catch (e) { setError(e.message); }
+  };
+
+  const openDoneModal = (entry) => {
+    setAppForm({
+      block_id: entry.block_id,
+      fertilizer_type_id: entry.fertilizer_type_id || '',
+      application_date: today,
+      quantity_kg: entry.total_kg_needed ? String(Math.round(Number(entry.total_kg_needed))) : '',
+      rate_kg_per_ha: entry.scheduled_rate_kg_per_ha ? String(entry.scheduled_rate_kg_per_ha) : '',
+      recommendation: 'apply_now',
+      notes: '',
+      schedule_id: entry.id,
+    });
+    setAppError('');
+    setAppModal({ mode: 'done', entry });
+  };
+
+  const openManualModal = () => {
+    setAppForm({
+      block_id: blocks.length > 0 ? blocks[0].id : '',
+      fertilizer_type_id: fertTypes.length > 0 ? fertTypes[0].id : '',
+      application_date: today,
+      quantity_kg: '',
+      rate_kg_per_ha: '',
+      recommendation: 'apply_now',
+      notes: '',
+      schedule_id: null,
+    });
+    setAppError('');
+    setAppModal({ mode: 'manual' });
+  };
+
+  const handleRecordApplication = async () => {
+    if (!appForm.quantity_kg || Number(appForm.quantity_kg) <= 0) {
+      setAppError('Quantity must be greater than 0'); return;
+    }
+    setAppSaving(true); setAppError('');
+    try {
+      await apiService.recordFertilizerApplication(token, {
+        block_id: appForm.block_id,
+        fertilizer_type_id: appForm.fertilizer_type_id,
+        application_date: appForm.application_date,
+        quantity_kg: Number(appForm.quantity_kg),
+        rate_kg_per_ha: appForm.rate_kg_per_ha ? Number(appForm.rate_kg_per_ha) : undefined,
+        recommendation: appForm.recommendation || undefined,
+        notes: appForm.notes || undefined,
+        schedule_id: appForm.schedule_id || undefined,
+      });
+      setAppModal(null);
+      await reload();
+    } catch (e) { setAppError(e.message); }
+    finally { setAppSaving(false); }
+  };
+
+  const overdueCount = alerts.filter(a => a.status === 'overdue').length;
+  const dueCount = alerts.filter(a => a.status === 'due').length;
+  const pendingCount = alerts.filter(a => a.status === 'pending').length;
+
+  // Derive block tabs from loaded blocks; count open entries per block from schedule
+  const openStatuses = new Set(['pending', 'due', 'overdue']);
+  const blockTabs = blocks
+    .map(b => ({
+      id: b.id,
+      code: b.block_code,
+      openCount: schedule.filter(s => s.block_id === b.id && openStatuses.has(s.status)).length,
+      total: schedule.filter(s => s.block_id === b.id).length,
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code));
+
+  const visibleSchedule = selectedBlock
+    ? schedule.filter(s => s.block_id === selectedBlock)
+    : schedule;
+
+  const visibleApplications = selectedBlock
+    ? applications.filter(a => a.block_id === selectedBlock)
+    : applications;
+
+  const statusBadge = { pending: 'badge-neutral', due: 'badge-warning', overdue: 'badge-danger', done: 'badge-success', skipped: 'badge-neutral' };
+  const statusLabel = { pending: 'Pending', due: 'Due', overdue: 'Overdue', done: 'Done', skipped: 'Skipped' };
+
+  const inputStyle = { width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem' };
+  const labelStyle = { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 };
+
   return (
     <>
-      <div className="kpi-grid">
-        <KpiCard icon="🌱" iconBg="kpi-icon-green" label="Total Blocks Tracked" value={fertilizerBlocks.length} unit="" />
-        <KpiCard icon="✅" iconBg="kpi-icon-green" label="OK — No Action"   value={fertilizerBlocks.filter(b => b.status === 'ok').length} unit="" />
-        <KpiCard icon="⚠️" iconBg="kpi-icon-amber" label="Due This Week"    value={dueCount}    unit="" />
-        <KpiCard icon="🚨" iconBg="kpi-icon-amber" label="Overdue"          value={overdueCount} unit="" delta={overdueCount > 0 ? overdueCount : undefined} />
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estate</div>
+          <select value={estateId} onChange={e => { setEstateId(e.target.value); setGenResult(null); }} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+            {estates.length === 0 && <option value="">Loading…</option>}
+            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+        {schedules.length > 0 && (
+          <div>
+            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Schedule</div>
+            <select value={selectedScheduleId} onChange={e => setSelectedScheduleId(e.target.value)}
+              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+              {schedules.map(h => (
+                <option key={h.id} value={h.id}>
+                  {fmtMonth(h.period_start)}{h.status === 'closed' ? ' (inactive)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          {canWrite && (
+            <button onClick={handleGenerate} disabled={generating || !estateId}
+              style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
+              {generating ? 'Generating…' : `⚡ Generate ${fmtMonth(nextMonthStr)}`}
+            </button>
+          )}
+          {canWrite && (
+            <button onClick={openManualModal} disabled={!estateId || blocks.length === 0}
+              style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', cursor: 'pointer', background: 'transparent', color: 'var(--color-text)', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
+              + Record Application
+            </button>
+          )}
+        </div>
       </div>
 
-      {overdueCount > 0 && (
-        <div className="alert alert-danger" style={{ marginBottom: 'var(--space-6)' }}>
-          <span>🚨</span>
-          <span><strong>{overdueCount} blocks</strong> are overdue for fertilizer application. Delays can reduce yield and soil quality. Apply immediately.</span>
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
         </div>
       )}
 
-      <div className="section-card">
-        <div className="section-card-header">
-          <div className="section-card-title">
-            <div className="section-card-title-icon">🌱</div>
-            Block Rotation Status
-          </div>
-          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-            <span className="badge badge-success">OK</span>
-            <span className="badge badge-warning">Due</span>
-            <span className="badge badge-danger">Overdue</span>
-          </div>
+      {genResult && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,0.08)', color: 'var(--color-success)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(22,163,74,0.2)' }}>
+          Schedule generated for <strong>{fmtMonth(genResult.period_start)}</strong>: {genResult.inserted} new entries · {genResult.skipped_existing ?? 0} skipped existing · {genResult.skipped_recent ?? 0} applied recently
         </div>
-        <div className="section-card-body">
-          <div className="block-grid">
-            {fertilizerBlocks.map(b => (
-              <div key={b.block} className={`block-card status-${b.status}`}>
-                <div className="block-name">{b.block}</div>
-                <div className="block-estate">{b.estate}</div>
-                <div className="block-days">{b.daysSince}</div>
-                <div className="block-days-label">days since last</div>
-                <StatusBadge status={b.status} />
-                <div style={{ marginTop: 'var(--space-3)', fontSize: '0.75rem', color: 'var(--color-primary-light)', fontWeight: 600 }}>
-                  → {b.recommended}
-                </div>
-              </div>
-            ))}
-          </div>
+      )}
+
+      {/* KPI cards */}
+      <div className="kpi-grid">
+        <KpiCard icon="🚨" iconBg="kpi-icon-amber" label="Overdue"    value={overdueCount}   unit="" />
+        <KpiCard icon="⚠️" iconBg="kpi-icon-amber" label="Due Now"    value={dueCount}       unit="" />
+        <KpiCard icon="📅" iconBg="kpi-icon-blue"  label="Pending"    value={pendingCount}   unit="" />
+        <KpiCard icon="🌱" iconBg="kpi-icon-green" label="All Alerts" value={alerts.length}  unit="" />
+      </div>
+
+      {loading && <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading fertilizer data…</div>}
+
+      {/* Tab bar + filters */}
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '2px solid var(--color-border)', marginBottom: 'var(--space-5)', gap: 0 }}>
+        {[
+          { id: 'schedule', label: 'Schedule' },
+          { id: 'history',  label: 'Application History' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setSubTab(t.id)} style={{
+            padding: '9px 20px', background: 'transparent', border: 'none', cursor: 'pointer',
+            fontWeight: 600, fontSize: '0.875rem',
+            color: subTab === t.id ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            borderBottom: subTab === t.id ? '2px solid var(--color-primary)' : '2px solid transparent',
+            marginBottom: -2,
+          }}>
+            {t.label}
+          </button>
+        ))}
+        {/* Filters pushed to the right */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', paddingBottom: 6 }}>
+          <select value={selectedBlock} onChange={e => setSelectedBlock(e.target.value)}
+            style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem', fontWeight: 600 }}>
+            {blockTabs.map(b => <option key={b.id} value={b.id}>{b.code}</option>)}
+            <option value="">All Blocks</option>
+          </select>
+          {subTab === 'schedule' && (
+            <select value={scheduleStatus} onChange={e => setScheduleStatus(e.target.value)}
+              style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem', minWidth: 140 }}>
+              <option value="due,overdue">Due &amp; Overdue</option>
+              <option value="pending">Pending</option>
+              <option value="done">Done</option>
+              <option value="skipped">Skipped</option>
+              <option value="">All</option>
+            </select>
+          )}
         </div>
       </div>
+
+      {/* Schedule tab */}
+      {subTab === 'schedule' && (
+        <div className="table-wrap">
+          <div className="table-header-bar">
+            <div>
+              <div className="table-title">Schedule</div>
+              <div className="table-subtitle">{visibleSchedule.length} entr{visibleSchedule.length === 1 ? 'y' : 'ies'}</div>
+            </div>
+          </div>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+          ) : visibleSchedule.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              No entries for this filter.
+              {canWrite && <span> Click <strong>Generate Schedule</strong> to create entries.</span>}
+            </div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  {!selectedBlock && <th>Block</th>}
+                  <th>Fertilizer</th>
+                  <th>Due Date</th>
+                  <th>Status</th>
+                  <th>Rate kg/ha</th>
+                  <th>Total Kg</th>
+                  {canWrite && <th>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSchedule.map(s => (
+                  <tr key={s.id}>
+                    {!selectedBlock && <td style={{ fontWeight: 600 }}>{s.block_code}</td>}
+                    <td>{s.fertilizer_code || '—'}</td>
+                    <td style={{ fontSize: '0.8125rem' }}>{s.due_date}</td>
+                    <td><span className={`badge ${statusBadge[s.status] || 'badge-neutral'}`}>{statusLabel[s.status] || s.status}</span></td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{s.scheduled_rate_kg_per_ha ? `${s.scheduled_rate_kg_per_ha} kg/ha` : '—'}</td>
+                    <td style={{ fontWeight: 600 }}>{s.total_kg_needed ? `${Number(s.total_kg_needed).toFixed(0)} kg` : '—'}</td>
+                    {canWrite && (
+                      <td>
+                        {(s.status === 'due' || s.status === 'overdue' || s.status === 'pending') && (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={() => openDoneModal(s)}
+                              style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--color-success)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                              Done
+                            </button>
+                            <button onClick={() => handleSkip(s.id)}
+                              style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                              Skip
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Application History tab */}
+      {subTab === 'history' && (
+        <div className="table-wrap">
+          <div className="table-header-bar">
+            <div>
+              <div className="table-title">Application History</div>
+              <div className="table-subtitle">{visibleApplications.length} record{visibleApplications.length !== 1 ? 's' : ''}</div>
+            </div>
+          </div>
+          {historyLoading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+          ) : visibleApplications.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>No applications recorded yet.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  {!selectedBlock && <th>Block</th>}
+                  <th>Date</th>
+                  <th>Fertilizer</th>
+                  <th style={{ textAlign: 'right' }}>Qty (kg)</th>
+                  <th style={{ textAlign: 'right' }}>Rate (kg/ha)</th>
+                  <th>Recommendation</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleApplications.map(a => (
+                  <tr key={a.id}>
+                    {!selectedBlock && <td style={{ fontWeight: 600 }}>{a.block_code}</td>}
+                    <td style={{ fontSize: '0.8125rem' }}>{a.application_date}</td>
+                    <td style={{ fontSize: '0.8125rem' }}>{a.fertilizer_code || a.fertilizer_name || '—'}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600, fontSize: '0.8125rem' }}>{a.quantity_kg != null ? `${Number(a.quantity_kg).toFixed(0)} kg` : '—'}</td>
+                    <td style={{ textAlign: 'right', fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{a.rate_kg_per_ha ? `${a.rate_kg_per_ha}` : '—'}</td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{a.recommendation ? a.recommendation.replace('_', ' ') : '—'}</td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', maxWidth: 180 }}>{a.notes || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {!loading && schedules.length === 0 && !error && (
+        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)', marginTop: 'var(--space-6)' }}>
+          <div style={{ fontSize: '2rem', marginBottom: 10 }}>🌱</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>No schedules for this estate</div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+            {canWrite ? `Click "Generate ${fmtMonth(nextMonthStr)}" to create the first schedule.` : 'No schedule has been generated yet.'}
+          </div>
+        </div>
+      )}
+
+      {/* ── Record / Manual Application Modal ── */}
+      {appModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 4 }}>
+              {appModal.mode === 'done' ? 'Record Application' : 'Manual Application Entry'}
+            </div>
+            {appModal.mode === 'done' && (
+              <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+                {appModal.entry.block_code} · {appModal.entry.fertilizer_code} · scheduled {appModal.entry.due_date}
+              </div>
+            )}
+            {appModal.mode === 'manual' && <div style={{ marginBottom: 20 }} />}
+
+            {appError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {appError}
+              </div>
+            )}
+
+            {/* Block selector — manual only */}
+            {appModal.mode === 'manual' && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={labelStyle}>Block</label>
+                <select value={appForm.block_id} onChange={e => setAppForm(p => ({ ...p, block_id: e.target.value }))} style={inputStyle}>
+                  {blocks.map(b => <option key={b.id} value={b.id}>{b.block_code}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Fertilizer type — manual only */}
+            {appModal.mode === 'manual' && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={labelStyle}>Fertilizer Product</label>
+                <select value={appForm.fertilizer_type_id} onChange={e => setAppForm(p => ({ ...p, fertilizer_type_id: e.target.value }))} style={inputStyle}>
+                  {fertTypes.map(t => <option key={t.id} value={t.id}>{t.code} — {t.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Application date */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Application Date</label>
+              <input type="date" value={appForm.application_date} onChange={e => setAppForm(p => ({ ...p, application_date: e.target.value }))} style={inputStyle} />
+            </div>
+
+            {/* Quantity + Rate side by side */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Quantity (kg) <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                <input type="number" min="0" step="0.1" value={appForm.quantity_kg} onChange={e => setAppForm(p => ({ ...p, quantity_kg: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Rate (kg/ha)</label>
+                <input type="number" min="0" step="0.1" value={appForm.rate_kg_per_ha} onChange={e => setAppForm(p => ({ ...p, rate_kg_per_ha: e.target.value }))} placeholder="Auto" style={inputStyle} />
+              </div>
+            </div>
+
+            {/* Recommendation */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Recommendation</label>
+              <select value={appForm.recommendation} onChange={e => setAppForm(p => ({ ...p, recommendation: e.target.value }))} style={inputStyle}>
+                <option value="apply_now">Apply Now</option>
+                <option value="delay">Delay</option>
+                <option value="increase_dosage">Increase Dosage</option>
+                <option value="skipped">Skipped</option>
+              </select>
+            </div>
+
+            {/* Notes */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Notes</label>
+              <textarea value={appForm.notes} onChange={e => setAppForm(p => ({ ...p, notes: e.target.value }))} rows={2} placeholder="Optional" style={{ ...inputStyle, resize: 'vertical' }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setAppModal(null); setAppError(''); }} disabled={appSaving}
+                style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Cancel
+              </button>
+              <button onClick={handleRecordApplication} disabled={appSaving}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: appSaving ? 0.7 : 1 }}>
+                {appSaving ? 'Saving…' : 'Record Application'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -3416,15 +3933,737 @@ function EstateBlocksTab() {
 }
 
 
+/* ── Tab: Fertilizer Schedule Management ─────────────────────────────── */
+function FertilizerScheduleMgmtTab() {
+  const { token, canWrite } = useAuth();
+  const [estates, setEstates]             = useState([]);
+  const [estateId, setEstateId]           = useState('');
+  const [schedules, setSchedules]         = useState([]);
+  const [loading, setLoading]             = useState(false);
+  const [generating, setGenerating]       = useState(false);
+  const [deleting, setDeleting]           = useState(null); // scheduleId being deleted
+  const [confirmDelete, setConfirmDelete] = useState(null); // schedule obj
+  const [error, setError]                 = useState('');
+  const [genResult, setGenResult]         = useState(null);
+
+  const nextMonthStr = (() => {
+    const d = new Date();
+    const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
+    const m = d.getMonth() === 11 ? 1 : d.getMonth() + 2;
+    return `${y}-${String(m).padStart(2, '0')}-01`;
+  })();
+
+  const fmtMonth = iso => {
+    if (!iso) return '';
+    const [y, mo] = iso.split('-');
+    return new Date(y, mo - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    apiService.getEstates(token).then(data => {
+      setEstates(data);
+      if (data.length > 0) setEstateId(data[0].id);
+    }).catch(() => {});
+  }, [token]);
+
+  const loadSchedules = () => {
+    setLoading(true);
+    apiService.getFertilizerSchedules(token, estateId)
+      .then(data => setSchedules(Array.isArray(data) ? data : []))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!token || !estateId) return;
+    loadSchedules();
+  }, [token, estateId]);
+
+  const handleGenerate = async () => {
+    if (!estateId) return;
+    setGenerating(true); setError(''); setGenResult(null);
+    try {
+      const result = await apiService.generateFertilizerScheduleForMonth(token, {
+        estate_id: estateId,
+        period_start: nextMonthStr,
+      });
+      setGenResult(result);
+      loadSchedules();
+    } catch (e) {
+      if (e.message && e.message.includes('already exists')) {
+        setError(`A schedule for ${fmtMonth(nextMonthStr)} already exists. Delete it first to regenerate.`);
+      } else {
+        setError(e.message);
+      }
+    } finally { setGenerating(false); }
+  };
+
+  const handleDelete = async (sched) => {
+    setDeleting(sched.id);
+    setError('');
+    try {
+      await apiService.deleteFertilizerSchedule(token, sched.id);
+      setConfirmDelete(null);
+      loadSchedules();
+    } catch (e) { setError(e.message); }
+    finally { setDeleting(null); }
+  };
+
+  const statusBadge  = { active: 'badge-success', closed: 'badge-neutral' };
+  const statusLabel  = { active: 'Active',        closed: 'Inactive' };
+
+  return (
+    <>
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estate</div>
+          <select value={estateId} onChange={e => { setEstateId(e.target.value); setGenResult(null); setError(''); }}
+            style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+            {estates.length === 0 && <option value="">Loading…</option>}
+            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+        {canWrite && (
+          <button onClick={handleGenerate} disabled={generating || !estateId}
+            style={{ marginLeft: 'auto', padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
+            {generating ? 'Generating…' : `⚡ Generate ${fmtMonth(nextMonthStr)}`}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
+        </div>
+      )}
+
+      {genResult && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(22,163,74,0.08)', color: 'var(--color-success)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(22,163,74,0.2)' }}>
+          Schedule generated for <strong>{fmtMonth(genResult.period_start)}</strong>: {genResult.inserted} entries created
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <div className="table-header-bar">
+          <div>
+            <div className="table-title">Schedule Runs</div>
+            <div className="table-subtitle">{schedules.length} schedule{schedules.length !== 1 ? 's' : ''}</div>
+          </div>
+        </div>
+        {loading ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+        ) : schedules.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+            No schedules yet.{canWrite && ` Click "Generate ${fmtMonth(nextMonthStr)}" to create the first one.`}
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Entries</th>
+                <th style={{ textAlign: 'right' }}>Overdue</th>
+                <th style={{ textAlign: 'right' }}>Due</th>
+                <th style={{ textAlign: 'right' }}>Done</th>
+                <th>Generated By</th>
+                <th>Generated At</th>
+                {canWrite && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {schedules.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{fmtMonth(s.period_start)}</td>
+                  <td><span className={`badge ${statusBadge[s.status] || 'badge-neutral'}`}>{statusLabel[s.status] || s.status}</span></td>
+                  <td style={{ textAlign: 'right', fontSize: '0.8125rem' }}>{s.entry_count ?? 0}</td>
+                  <td style={{ textAlign: 'right', fontSize: '0.8125rem', color: s.overdue_count > 0 ? 'var(--color-danger)' : 'inherit', fontWeight: s.overdue_count > 0 ? 700 : 400 }}>{s.overdue_count ?? 0}</td>
+                  <td style={{ textAlign: 'right', fontSize: '0.8125rem', color: s.due_count > 0 ? 'var(--color-warning)' : 'inherit' }}>{s.due_count ?? 0}</td>
+                  <td style={{ textAlign: 'right', fontSize: '0.8125rem', color: 'var(--color-success)' }}>{s.done_count ?? 0}</td>
+                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{s.generated_by_name || '—'}</td>
+                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{s.generated_at ? s.generated_at.slice(0, 16).replace('T', ' ') : '—'}</td>
+                  {canWrite && (
+                    <td>
+                      <button onClick={() => setConfirmDelete(s)}
+                        style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'rgba(220,38,38,0.07)', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                        Delete
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 12 }}>Delete Schedule?</div>
+            <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginBottom: 24 }}>
+              This will permanently delete the <strong>{fmtMonth(confirmDelete.period_start)}</strong> schedule and all {confirmDelete.entry_count ?? 0} entries. This cannot be undone.
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDelete(null)} disabled={!!deleting}
+                style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Cancel
+              </button>
+              <button onClick={() => handleDelete(confirmDelete)} disabled={!!deleting}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-danger)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: deleting ? 0.7 : 1 }}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── Tab: Fertilizer Programme ────────────────────────────────────────── */
+function FertilizerProgrammeTab() {
+  const { token, canWrite } = useAuth();
+
+  const [estates, setEstates]   = useState([]);
+  const [estateId, setEstateId] = useState('');
+  const [fertTypes, setFertTypes] = useState([]);
+  const [steps, setSteps]       = useState([]);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [modal, setModal]       = useState(null); // null | 'add' | { step obj }
+  const [form, setForm]         = useState({});
+  const [saving, setSaving]     = useState(false);
+  const [formError, setFormError] = useState('');
+  const [deleting, setDeleting] = useState(null); // id being deleted
+  const [conflictStep, setConflictStep] = useState(null); // existing step that would conflict
+
+  const ZONES   = ['Low', 'Mid', 'High'];
+  const STAGES  = ['Mature', 'Young', 'Immature'];
+
+  useEffect(() => {
+    if (!token) return;
+    Promise.all([apiService.getEstates(token), apiService.getFertilizerTypes(token)])
+      .then(([est, types]) => {
+        setEstates(est);
+        setFertTypes(Array.isArray(types) ? types : []);
+        if (est.length > 0) setEstateId(est[0].id);
+      }).catch(() => {});
+  }, [token]);
+
+  const load = (eid = estateId) => {
+    if (!token || !eid) return;
+    setLoading(true); setError('');
+    apiService.getFertilizerProgramme(token, eid)
+      .then(data => setSteps(Array.isArray(data) ? data : []))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [token, estateId]);
+
+  const openAdd = () => {
+    setForm({ fertilizer_type_id: fertTypes[0]?.id || '', application_no: 1, interval_weeks: 8, rate_kg_per_ha: '', zone_override: '', growth_stage_filter: '', notes: '' });
+    setFormError(''); setModal('add');
+  };
+
+  const openEdit = (s) => {
+    setForm({ interval_weeks: s.interval_weeks, rate_kg_per_ha: s.rate_kg_per_ha, zone_override: s.zone_override || '', growth_stage_filter: s.growth_stage_filter || '', notes: s.notes || '' });
+    setFormError(''); setModal(s);
+  };
+
+  const buildPayload = () => ({
+    interval_weeks: Number(form.interval_weeks),
+    rate_kg_per_ha: Number(form.rate_kg_per_ha),
+    zone_override: form.zone_override || null,
+    growth_stage_filter: form.growth_stage_filter || null,
+    notes: form.notes.trim() || null,
+  });
+
+  const handleSave = async () => {
+    if (!form.rate_kg_per_ha || Number(form.rate_kg_per_ha) <= 0) { setFormError('Rate must be greater than 0'); return; }
+    if (!form.interval_weeks || Number(form.interval_weeks) <= 0) { setFormError('Interval must be greater than 0'); return; }
+
+    // Conflict check — only on add
+    if (modal === 'add') {
+      const incomingZone  = form.zone_override || null;
+      const incomingStage = form.growth_stage_filter || null;
+      const conflict = steps.find(s =>
+        s.fertilizer_type_id === form.fertilizer_type_id &&
+        Number(s.application_no) === Number(form.application_no) &&
+        (s.zone_override || null) === incomingZone &&
+        (s.growth_stage_filter || null) === incomingStage
+      );
+      if (conflict) { setConflictStep(conflict); return; }
+    }
+
+    await _doSave();
+  };
+
+  const _doSave = async () => {
+    setSaving(true); setFormError('');
+    try {
+      if (modal === 'add') {
+        await apiService.createFertilizerProgrammeStep(token, { estate_id: estateId, fertilizer_type_id: form.fertilizer_type_id, application_no: Number(form.application_no), ...buildPayload() });
+      } else {
+        await apiService.updateFertilizerProgrammeStep(token, modal.id, buildPayload());
+      }
+      setModal(null); setConflictStep(null); load();
+    } catch (e) { setFormError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleReplaceConfirmed = async () => {
+    setSaving(true); setFormError('');
+    try {
+      await apiService.deleteFertilizerProgrammeStep(token, conflictStep.id);
+      await apiService.createFertilizerProgrammeStep(token, { estate_id: estateId, fertilizer_type_id: form.fertilizer_type_id, application_no: Number(form.application_no), ...buildPayload() });
+      setModal(null); setConflictStep(null); load();
+    } catch (e) { setFormError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id) => {
+    setDeleting(id);
+    try { await apiService.deleteFertilizerProgrammeStep(token, id); load(); }
+    catch (e) { setError(e.message); }
+    finally { setDeleting(null); }
+  };
+
+  // Group steps by fertilizer code for visual clarity
+  const grouped = steps.reduce((acc, s) => {
+    const key = s.fertilizer_code;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(s);
+    return acc;
+  }, {});
+
+  const inputStyle = { width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem' };
+  const labelStyle = { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 };
+
+  return (
+    <>
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', marginBottom: 'var(--space-5)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estate</div>
+          <select value={estateId} onChange={e => setEstateId(e.target.value)}
+            style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+            {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+        {canWrite && (
+          <div style={{ marginLeft: 'auto' }}>
+            <button onClick={openAdd} disabled={!estateId || fertTypes.length === 0}
+              style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>
+              + Add Step
+            </button>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+      ) : steps.length === 0 ? (
+        <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)' }}>
+          <div style={{ fontSize: '2rem', marginBottom: 10 }}>📋</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>No programme steps for this estate</div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
+            {canWrite ? 'Add steps to define the fertilizer rotation schedule.' : 'No programme has been configured yet.'}
+          </div>
+        </div>
+      ) : (
+        Object.entries(grouped).map(([fertCode, groupSteps]) => (
+          <div key={fertCode} className="table-wrap" style={{ marginBottom: 'var(--space-5)' }}>
+            <div className="table-header-bar">
+              <div>
+                <div className="table-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.9rem', color: 'var(--color-primary)' }}>{fertCode}</span>
+                  <span style={{ fontWeight: 400, color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>{groupSteps[0].fertilizer_name}</span>
+                </div>
+                <div className="table-subtitle">
+                  {groupSteps[0].npk_n != null ? `N ${groupSteps[0].npk_n}% · P ${groupSteps[0].npk_p}% · K ${groupSteps[0].npk_k}%` : ''}
+                  {' · '}{groupSteps.length} application{groupSteps.length !== 1 ? 's' : ''} per year
+                </div>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>App #</th>
+                  <th>Interval (weeks)</th>
+                  <th style={{ textAlign: 'right' }}>Rate (kg/ha)</th>
+                  <th>Zone</th>
+                  <th>Growth Stage</th>
+                  <th>Notes</th>
+                  {canWrite && <th>Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {groupSteps.map(s => (
+                  <tr key={s.id}>
+                    <td style={{ fontWeight: 700, color: 'var(--color-primary)' }}>#{s.application_no}</td>
+                    <td>{s.interval_weeks} wks</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{s.rate_kg_per_ha}</td>
+                    <td>{s.zone_override ? <span className="badge badge-neutral">{s.zone_override}</span> : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem' }}>All zones</span>}</td>
+                    <td>{s.growth_stage_filter ? <span className="badge badge-neutral">{s.growth_stage_filter}</span> : <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8125rem' }}>All stages</span>}</td>
+                    <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', maxWidth: 200 }}>{s.notes || '—'}</td>
+                    {canWrite && (
+                      <td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => openEdit(s)}
+                            style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                            Edit
+                          </button>
+                          <button onClick={() => handleDelete(s.id)} disabled={deleting === s.id}
+                            style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: deleting === s.id ? 0.5 : 1 }}>
+                            {deleting === s.id ? '…' : 'Remove'}
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))
+      )}
+
+      {/* Conflict confirmation modal */}
+      {conflictStep && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.05rem', marginBottom: 8 }}>Step already exists</div>
+            <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginBottom: 16, lineHeight: 1.6 }}>
+              A step for <strong>{conflictStep.fertilizer_code}</strong> application&nbsp;#{conflictStep.application_no}
+              {conflictStep.zone_override ? `, zone ${conflictStep.zone_override}` : ''}
+              {conflictStep.growth_stage_filter ? `, ${conflictStep.growth_stage_filter} blocks` : ''} already exists with:
+            </p>
+            <div style={{ background: 'var(--color-surface-2)', borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: '0.875rem', display: 'flex', gap: 24 }}>
+              <div><div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Interval</div><strong>{conflictStep.interval_weeks} weeks</strong></div>
+              <div><div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Rate</div><strong>{conflictStep.rate_kg_per_ha} kg/ha</strong></div>
+              {conflictStep.notes && <div><div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Notes</div><span>{conflictStep.notes}</span></div>}
+            </div>
+            <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              Do you want to <strong>replace it</strong> with the new values, or go back and adjust?
+            </p>
+            {formError && <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 12, fontSize: '0.875rem' }}>{formError}</div>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConflictStep(null)} disabled={saving}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Go Back
+              </button>
+              <button onClick={handleReplaceConfirmed} disabled={saving}
+                style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: 'var(--color-danger)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+                {saving ? 'Replacing…' : 'Replace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add / Edit Modal */}
+      {modal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 4 }}>
+              {modal === 'add' ? 'Add Programme Step' : `Edit Step — ${modal.fertilizer_code} #${modal.application_no}`}
+            </div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              {modal === 'add' ? estates.find(e => e.id === estateId)?.name : modal.estate_name}
+            </div>
+
+            {formError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {formError}
+              </div>
+            )}
+
+            {/* Fertilizer + App No — add mode only */}
+            {modal === 'add' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <label style={labelStyle}>Fertilizer Product <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                  <select value={form.fertilizer_type_id} onChange={e => setForm(p => ({ ...p, fertilizer_type_id: e.target.value }))} style={inputStyle}>
+                    {fertTypes.map(t => <option key={t.id} value={t.id}>{t.code} — {t.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>Application # <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                  <input type="number" min="1" value={form.application_no} onChange={e => setForm(p => ({ ...p, application_no: e.target.value }))} style={inputStyle} />
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Interval (weeks) <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                <input type="number" min="1" value={form.interval_weeks} onChange={e => setForm(p => ({ ...p, interval_weeks: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Rate (kg/ha) <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                <input type="number" min="0" step="0.1" value={form.rate_kg_per_ha} onChange={e => setForm(p => ({ ...p, rate_kg_per_ha: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Zone</label>
+                <select value={form.zone_override} onChange={e => setForm(p => ({ ...p, zone_override: e.target.value }))} style={inputStyle}>
+                  <option value="">All zones</option>
+                  {ZONES.map(z => <option key={z} value={z}>{z}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Growth Stage</label>
+                <select value={form.growth_stage_filter} onChange={e => setForm(p => ({ ...p, growth_stage_filter: e.target.value }))} style={inputStyle}>
+                  <option value="">All stages</option>
+                  {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Notes</label>
+              <textarea value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} rows={2} placeholder="Optional — e.g. based on soil test 2026-04" style={{ ...inputStyle, resize: 'vertical' }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setModal(null)} disabled={saving}
+                style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+                {saving ? 'Saving…' : modal === 'add' ? 'Add Step' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ── Tab: Fertilizer Management ───────────────────────────────────────── */
+function FertilizerMgmtTab() {
+  const { token, canWrite } = useAuth();
+  const [types, setTypes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [modal, setModal] = useState(null); // null | 'add' | { edit obj }
+  const [form, setForm] = useState({ code: '', name: '', npk_n: '', npk_p: '', npk_k: '', default_dosage_kg: '', description: '' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    apiService.getFertilizerTypes(token)
+      .then(data => setTypes(Array.isArray(data) ? data : []))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { if (token) load(); }, [token]);
+
+  const openAdd = () => {
+    setForm({ code: '', name: '', npk_n: '', npk_p: '', npk_k: '', default_dosage_kg: '', description: '' });
+    setFormError('');
+    setModal('add');
+  };
+
+  const openEdit = (t) => {
+    setForm({
+      code: t.code,
+      name: t.name,
+      npk_n: t.npk_n ?? '',
+      npk_p: t.npk_p ?? '',
+      npk_k: t.npk_k ?? '',
+      default_dosage_kg: t.default_dosage_kg ?? '',
+      description: t.description ?? '',
+    });
+    setFormError('');
+    setModal(t);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { setFormError('Name is required'); return; }
+    if (modal === 'add' && !form.code.trim()) { setFormError('Code is required'); return; }
+    setSaving(true); setFormError('');
+    const payload = {
+      name: form.name.trim(),
+      npk_n: form.npk_n !== '' ? Number(form.npk_n) : null,
+      npk_p: form.npk_p !== '' ? Number(form.npk_p) : null,
+      npk_k: form.npk_k !== '' ? Number(form.npk_k) : null,
+      default_dosage_kg: form.default_dosage_kg !== '' ? Number(form.default_dosage_kg) : null,
+      description: form.description.trim() || null,
+    };
+    try {
+      if (modal === 'add') {
+        await apiService.createFertilizerType(token, { code: form.code.trim(), ...payload });
+      } else {
+        await apiService.updateFertilizerType(token, modal.id, payload);
+      }
+      setModal(null);
+      load();
+    } catch (e) { setFormError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const inputStyle = { width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box', border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem' };
+  const labelStyle = { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 };
+
+  return (
+    <>
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
+          {error}
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <div className="table-header-bar">
+          <div>
+            <div className="table-title">Fertilizer Products</div>
+            <div className="table-subtitle">{types.length} products in catalogue</div>
+          </div>
+          {canWrite && (
+            <button onClick={openAdd} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem' }}>
+              + Add Fertilizer
+            </button>
+          )}
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Name</th>
+                <th style={{ textAlign: 'right' }}>N %</th>
+                <th style={{ textAlign: 'right' }}>P %</th>
+                <th style={{ textAlign: 'right' }}>K %</th>
+                <th style={{ textAlign: 'right' }}>Default Dosage (kg/ha)</th>
+                <th>Description</th>
+                {canWrite && <th>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {types.length === 0 ? (
+                <tr><td colSpan={canWrite ? 8 : 7} style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)' }}>No fertilizer products found.</td></tr>
+              ) : types.map(t => (
+                <tr key={t.id}>
+                  <td><span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '0.8125rem', color: 'var(--color-primary)' }}>{t.code}</span></td>
+                  <td style={{ fontWeight: 600 }}>{t.name}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{t.npk_n != null ? `${t.npk_n}%` : '—'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{t.npk_p != null ? `${t.npk_p}%` : '—'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600 }}>{t.npk_k != null ? `${t.npk_k}%` : '—'}</td>
+                  <td style={{ textAlign: 'right', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>{t.default_dosage_kg != null ? `${t.default_dosage_kg} kg` : '—'}</td>
+                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', maxWidth: 240 }}>{t.description || '—'}</td>
+                  {canWrite && (
+                    <td>
+                      <button onClick={() => openEdit(t)} style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                        Edit
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ── Add / Edit Modal ── */}
+      {modal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 520, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>
+              {modal === 'add' ? 'Add Fertilizer Product' : `Edit — ${modal.code}`}
+            </div>
+
+            {formError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {formError}
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={labelStyle}>Code {modal === 'add' && <span style={{ color: 'var(--color-danger)' }}>*</span>}</label>
+                <input
+                  type="text"
+                  value={form.code}
+                  readOnly={modal !== 'add'}
+                  onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
+                  placeholder="e.g. T0_200"
+                  style={{ ...inputStyle, cursor: modal !== 'add' ? 'not-allowed' : 'text', color: modal !== 'add' ? 'var(--color-text-muted)' : 'var(--color-text)', fontFamily: 'monospace' }}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Name <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+                <input type="text" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Urea 200" style={inputStyle} />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 14 }}>
+              {[['npk_n', 'Nitrogen (N %)'], ['npk_p', 'Phosphorus (P %)'], ['npk_k', 'Potassium (K %)']].map(([field, label]) => (
+                <div key={field}>
+                  <label style={labelStyle}>{label}</label>
+                  <input type="number" min="0" max="100" step="0.01" value={form[field]} onChange={e => setForm(p => ({ ...p, [field]: e.target.value }))} placeholder="0.00" style={inputStyle} />
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={labelStyle}>Default Dosage (kg/ha)</label>
+              <input type="number" min="0" step="0.001" value={form.default_dosage_kg} onChange={e => setForm(p => ({ ...p, default_dosage_kg: e.target.value }))} placeholder="Optional" style={inputStyle} />
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={labelStyle}>Description</label>
+              <textarea value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} rows={2} placeholder="Optional" style={{ ...inputStyle, resize: 'vertical' }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setModal(null)} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>
+                Cancel
+              </button>
+              <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+                {saving ? 'Saving…' : modal === 'add' ? 'Add Product' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 const navItems = [
-  { id: 'overview',    icon: '🏠', label: 'Overview' },
+  { id: 'overview',      icon: '🏠', label: 'Overview' },
   { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
-  { id: 'roi',         icon: '📊', label: 'ROI Calculator' },
-  { id: 'water',       icon: '💧', label: 'Water Efficiency' },
-  { id: 'fertilizer',  icon: '🌱', label: 'Fertilizer Rotation' },
-  { id: 'labour',      icon: '👥', label: 'Labour Planner' },
-  { id: 'predictions', icon: '🔮', label: 'Yield Predictions' },
-  { id: 'reports',     icon: '📄', label: 'Reports' },
+  { id: 'roi',           icon: '📊', label: 'ROI Calculator' },
+  { id: 'water',         icon: '💧', label: 'Water Efficiency' },
+  { id: 'fertilizer',    icon: '🌱', label: 'Fertilizer Rotation' },
+  { id: 'fert-schedules', icon: '📆', label: 'Fertilizer Schedules' },
+  { id: 'fert-programme', icon: '📋', label: 'Fertilizer Programme' },
+  { id: 'fert-mgmt',     icon: '🧪', label: 'Fertilizer Management' },
+  { id: 'labour',        icon: '👥', label: 'Labour Planner' },
+  { id: 'predictions',   icon: '🔮', label: 'Yield Predictions' },
+  { id: 'reports',       icon: '📄', label: 'Reports' },
 ];
 
 const tabTitles = {
@@ -3432,7 +4671,10 @@ const tabTitles = {
   'estate-blocks': { title: 'Estates & Blocks',  sub: 'Manage all estates and their plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
-  fertilizer: { title: 'Fertilizer Rotation', sub: 'Block-level application schedule & alerts' },
+  fertilizer:  { title: 'Fertilizer Rotation',    sub: 'Block-level application schedule & alerts' },
+  'fert-schedules': { title: 'Fertilizer Schedules', sub: 'Manage monthly schedule runs — generate, review and delete per-estate schedules' },
+  'fert-programme': { title: 'Fertilizer Programme', sub: 'Per-estate application schedules — adjust intervals & rates to match local soil conditions' },
+  'fert-mgmt': { title: 'Fertilizer Management',  sub: 'Product catalogue — NPK profiles, dosage rates' },
   labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
   predictions: { title: 'Yield Predictions',  sub: 'ML model forecasts for each block & month' },
   reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
@@ -3447,10 +4689,20 @@ const roundToMonth = (roundNumber) => {
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, loading, logout } = useAuth();
+  const { user, isAuthenticated, loading, logout, token } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [fertOverdueCount, setFertOverdueCount] = useState(0);
+
+  const refreshFertOverdueCount = () => {
+    if (!token) return;
+    apiService.getFertilizerAlerts(token)
+      .then(data => setFertOverdueCount(Array.isArray(data) ? data.filter(a => a.status === 'overdue').length : 0))
+      .catch(() => {});
+  };
+
+  useEffect(() => { refreshFertOverdueCount(); }, [token]);
 
   useEffect(() => {
     // Wait until auth has finished restoring/verifying the stored token
@@ -3498,10 +4750,8 @@ export default function DashboardPage() {
             >
               <span className="dash-nav-icon">{item.icon}</span>
               <span className="dash-nav-item-label">{item.label}</span>
-              {item.id === 'fertilizer' && (
-                <span className="dash-nav-badge">
-                  {fertilizerBlocks.filter(b => b.status === 'overdue').length}
-                </span>
+              {item.id === 'fertilizer' && fertOverdueCount > 0 && (
+                <span className="dash-nav-badge">{fertOverdueCount}</span>
               )}
             </button>
           ))}
@@ -3555,13 +4805,22 @@ export default function DashboardPage() {
           <div style={{ marginBottom: 'var(--space-6)' }}>
             <h1 className="dash-page-title">{title}</h1>
             <p className="dash-page-subtitle">{sub}</p>
+            {activeTab === 'fertilizer' && fertOverdueCount > 0 && (
+              <div className="alert alert-danger" style={{ marginTop: 'var(--space-3)', marginBottom: 0 }}>
+                <span>🚨</span>
+                <span><strong>{fertOverdueCount} block{fertOverdueCount !== 1 ? 's' : ''}</strong> overdue for fertilizer application. Delays reduce yield and soil health.</span>
+              </div>
+            )}
           </div>
 
           {activeTab === 'overview'    && <OverviewTab />}
           {activeTab === 'estate-blocks' && <EstateBlocksTab />}
           {activeTab === 'roi'         && <ROITab />}
           {activeTab === 'water'       && <WaterTab />}
-          {activeTab === 'fertilizer'  && <FertilizerTab />}
+          {activeTab === 'fertilizer'     && <FertilizerTab onOverdueChange={refreshFertOverdueCount} />}
+          {activeTab === 'fert-schedules' && <FertilizerScheduleMgmtTab />}
+          {activeTab === 'fert-programme' && <FertilizerProgrammeTab />}
+          {activeTab === 'fert-mgmt'   && <FertilizerMgmtTab />}
           {activeTab === 'labour'      && <LabourTab />}
           {activeTab === 'predictions' && <YieldPredictionTab />}
           {activeTab === 'reports'     && <ReportTab />}
