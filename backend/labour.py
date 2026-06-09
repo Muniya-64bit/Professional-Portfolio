@@ -184,11 +184,16 @@ def _snapshot_assignment_members(cur, plan_id):
 
 
 def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
-                          status='published', notes=None):
+                          status='published', notes=None, force=False):
     """Create one estate's monthly labour plan and return a summary dict.
 
-    Idempotent: if a plan already exists for (estate_id, period_start) it is
-    skipped and the rotation round is NOT advanced.
+    Idempotent by default: if a plan already exists for (estate_id,
+    period_start) it is skipped and the rotation round is NOT advanced.
+
+    When ``force=True`` and a plan already exists, that plan is deleted and
+    fully regenerated. The existing plan's rotation round is reused and the
+    cycle is NOT advanced again — a regenerate recreates the same month in
+    place, it does not move the rotation forward.
 
     Pipeline: compute predictions → place rotation-round groups on blocks
     (expected_yield = prediction) → full-coverage pass so every active group is
@@ -199,15 +204,28 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
     """
     year, month = period_start.year, period_start.month
 
-    # 1. Idempotency — one plan per estate per month
+    # 1. Idempotency — one plan per estate per month.
+    #    force=True regenerates in place; otherwise an existing plan is left alone.
     cur.execute(
         "SELECT id FROM labour_plan WHERE estate_id = %s AND period_start = %s",
         (estate_id, period_start),
     )
     existing = cur.fetchone()
+    regen_round = None
     if existing:
-        return {'estate_id': str(estate_id), 'created': False,
-                'reason': 'plan already exists', 'plan_id': str(existing[0])}
+        if not force:
+            return {'estate_id': str(estate_id), 'created': False,
+                    'reason': 'plan already exists', 'plan_id': str(existing[0])}
+        # Capture the round this plan was laid down on so the regenerate reuses
+        # it instead of the (already-advanced) cycle round.
+        cur.execute(
+            "SELECT MIN(rotation_round) FROM block_assignment WHERE labour_plan_id = %s",
+            (existing[0],),
+        )
+        regen_round = cur.fetchone()[0]
+        # Delete cascades to block_assignment + block_assignment_member and
+        # nulls yield_prediction.labour_plan_id (predictions are re-linked below).
+        cur.execute("DELETE FROM labour_plan WHERE id = %s", (existing[0],))
 
     # 2. Active rotation cycle defines which round (= this month) to lay down
     cur.execute(
@@ -221,6 +239,10 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
         return {'estate_id': str(estate_id), 'created': False,
                 'reason': 'no active rotation cycle'}
     cycle_id, current_round, total_rounds = cyc
+
+    # On regenerate, lay down the same round the original plan used.
+    if regen_round is not None:
+        current_round = regen_round
 
     # 3. Predictions for every block this month (also upserts yield_prediction)
     predictions = compute_block_predictions(cur, estate_id, year, month)
@@ -354,17 +376,21 @@ def _generate_estate_plan(cur, estate_id, period_start, created_by=None,
         (plan_id, year, month, estate_id),
     )
 
-    # 11. Advance the rotation round for next month (wraps at total_rounds)
-    cur.execute(
-        """UPDATE rotation_cycle
-           SET current_round = (current_round %% total_rounds) + 1, updated_at = NOW()
-           WHERE id = %s""",
-        (cycle_id,),
-    )
+    # 11. Advance the rotation round for next month (wraps at total_rounds).
+    #     Skipped on regenerate — recreating an existing month must not move the
+    #     rotation forward (the cycle already advanced when it was first created).
+    if regen_round is None:
+        cur.execute(
+            """UPDATE rotation_cycle
+               SET current_round = (current_round %% total_rounds) + 1, updated_at = NOW()
+               WHERE id = %s""",
+            (cycle_id,),
+        )
 
     return {
         'estate_id':            str(estate_id),
         'created':              True,
+        'regenerated':          regen_round is not None,
         'plan_id':              str(plan_id),
         'period_start':         period_start.isoformat(),
         'rotation_round':       current_round,
@@ -477,14 +503,16 @@ def list_plans():
 def create_plan():
     """POST /api/labour/plans — create one estate's monthly plan.
 
-    Body: { estate_id, period_start (any day of the month), status?, notes? }
+    Body: { estate_id, period_start (any day of the month), status?, notes?, force? }
     Worker assignments, expected yields (predictions) and totals are generated
-    automatically from the active rotation round.
+    automatically from the active rotation round. Pass force=true to delete and
+    regenerate an existing plan for that month (re-saving its predictions).
     """
     data         = request.get_json() or {}
     estate_id    = data.get('estate_id')
     period_raw   = data.get('period_start') or data.get('week_start')
     user_id      = request.user.get('user_id')
+    force        = bool(data.get('force'))
 
     if not estate_id or not period_raw:
         return jsonify({'error': 'estate_id and period_start are required'}), 400
@@ -498,7 +526,8 @@ def create_plan():
         with conn.cursor() as cur:
             summary = _generate_estate_plan(
                 cur, estate_id, period_start, created_by=user_id,
-                status=data.get('status', 'draft'), notes=data.get('notes'))
+                status=data.get('status', 'draft'), notes=data.get('notes'),
+                force=force)
             conn.commit()
         if not summary.get('created'):
             return jsonify(summary), 409

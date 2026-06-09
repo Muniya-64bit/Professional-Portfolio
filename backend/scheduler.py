@@ -12,6 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from labour import generate_monthly_plans, _next_month
 from fertilizer import refresh_schedule_statuses, _run_generate_schedule
+from predictions import compute_block_predictions
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,32 @@ def _run_monthly_job():
                 logger.warning("Fertilizer schedule generation failed for estate %s: %s", eid, payload)
     except Exception:
         logger.exception("Monthly fertilizer schedule job failed")
+
+    # Yield prediction generation for each active estate
+    try:
+        conn = psycopg.connect(os.environ['DATABASE_URL'])
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM estate")
+            estate_ids = [row[0] for row in cur.fetchall()]
+        conn.close()
+
+        for eid in estate_ids:
+            try:
+                conn = psycopg.connect(os.environ['DATABASE_URL'])
+                with conn.cursor() as cur:
+                    preds = compute_block_predictions(cur, eid, target.year, target.month)
+                conn.commit()
+                conn.close()
+                logger.info("Yield predictions saved for estate %s: %d blocks", eid, len(preds))
+            except Exception:
+                logger.exception("Yield prediction failed for estate %s", eid)
+                try:
+                    conn.rollback()
+                    conn.close()
+                except Exception:
+                    pass
+    except Exception:
+        logger.exception("Monthly yield prediction job failed")
 
 
 def _run_fertilizer_status_refresh():

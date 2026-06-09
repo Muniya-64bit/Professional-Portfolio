@@ -553,7 +553,7 @@ def get_schedule_entries(schedule_id):
                        fse.due_date, fse.status,
                        fse.scheduled_rate_kg_per_ha,
                        ROUND(fse.scheduled_rate_kg_per_ha * b.area_hectares, 1) AS total_kg_needed,
-                       fse.actual_application_id, fse.generated_at, fse.updated_at
+                       fse.actual_application_id, fse.created_at, fse.updated_at
                 FROM   fertilizer_schedule_entry fse
                 JOIN   block               b   ON b.id  = fse.block_id
                 JOIN   estate              e   ON e.id  = b.estate_id
