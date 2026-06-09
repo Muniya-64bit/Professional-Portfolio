@@ -412,6 +412,10 @@ export const apiService = {
   updateWaterUsage(token, usageId, data) {
     return this._water(token, 'PUT', `/usage/${usageId}`, data);
   },
+  
+  deleteWaterUsage(token, usageId) {
+  return this._water(token, 'DELETE', `/usage/${usageId}`);
+  },
 
   // ── ROI Calculator ────────────────────────────────────────────────────────
 
