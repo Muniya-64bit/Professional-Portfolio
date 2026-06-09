@@ -70,14 +70,18 @@ def compute_block_predictions(cur, estate_id, year, month):
 
     predictions = {}
     for block_id, worker_capacity in blocks:
+        # Only use history STRICTLY BEFORE the target month — a forecast must
+        # not peek at the month it is predicting (or any later actuals), or a
+        # stray same-month record skews the trend and zeroes the prediction.
         cur.execute(
             """
             SELECT year, month, yield_kg
             FROM block_yield_record
             WHERE block_id = %s
+              AND (year < %s OR (year = %s AND month < %s))
             ORDER BY year, month
             """,
-            (block_id,),
+            (block_id, year, year, month),
         )
         history = cur.fetchall()
 

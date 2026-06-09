@@ -323,6 +323,7 @@ class BlockAssignmentSerializer:
             'group_name': serialize_string(row.get('group_name')),
             'group_code': serialize_string(row.get('group_code')),
             'group_capacity': serialize_int(row.get('group_capacity')),
+            'allocated_workers': serialize_int(row.get('allocated_workers')),
             'original_group_name': serialize_string(row.get('original_group_name')),
             # Computed metrics
             'efficiency_pct': efficiency_pct,

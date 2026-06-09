@@ -3,9 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { apiService } from '../api/apiService';
-import { useAuth } from '../context/AuthContext';
-import { DataEntryModal } from '../components/DataEntryModal';
 import { CSVImportModal } from '../components/CSVImportModal';
+import { DataEntryModal } from '../components/DataEntryModal';
+import { useAuth } from '../context/AuthContext';
 
 /* ── Mock Data ──────────────────────────────────────────────────────────── */
 const estates = [
@@ -15,14 +15,6 @@ const estates = [
   { id: 4, name: 'Ratnapura',    location: 'Sabaragamuwa',      rank: 4, costPerKg: 345, production: 2450, trend: [6, 2, 8, -3, 4, 3, 2],    delta: +2.3 },
 ];
 
-// const waterData = [
-//   { month: 'Jan', intensity: 4.2, target: 4.5 },
-//   { month: 'Feb', intensity: 4.0, target: 4.5 },
-//   { month: 'Mar', intensity: 4.8, target: 4.5 },
-//   { month: 'Apr', intensity: 4.5, target: 4.5 },
-//   { month: 'May', intensity: 3.9, target: 4.4 },
-//   { month: 'Jun', intensity: 4.1, target: 4.4 },
-// ];
 
 
 const labourData = [
@@ -252,6 +244,7 @@ function ROITab() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [showCSVImport, setShowCSVImport] = useState(null);
+  const [hoveredPointIndex, setHoveredPointIndex] = useState(null);
   
   // Selected filters
   const [selectedEstateId, setSelectedEstateId] = useState('');
@@ -496,21 +489,64 @@ function ROITab() {
                 strokeLinejoin="round"
               />
 
-              {/* Data points */}
+              {/* Data points with hover detection */}
               {estateMonthlyData.map((d, i) => {
                 const x = 100 + (i / 11) * 1100;
                 const y = graphHeight * (1 - (d.cost_per_kg / maxCost));
                 const isSelected = i === selectedMonth - 1;
+                const isHovered = i === hoveredPointIndex;
                 return (
-                  <circle
-                    key={`point-${i}`}
-                    cx={x}
-                    cy={y}
-                    r={isSelected ? 6 : 4}
-                    fill={isSelected ? 'var(--color-primary)' : 'var(--color-surface-3)'}
-                    stroke="var(--color-primary)"
-                    strokeWidth="2"
-                  />
+                  <g key={`point-${i}`}>
+                    {/* Invisible larger circle for better hit detection */}
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r="12"
+                      fill="transparent"
+                      pointerEvents="all"
+                      onMouseEnter={() => setHoveredPointIndex(i)}
+                      onMouseLeave={() => setHoveredPointIndex(null)}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    {/* Visible data point */}
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={isHovered ? 6 : isSelected ? 5 : 3}
+                      fill={isHovered || isSelected ? '#3b82f6' : '#e5e7eb'}
+                      stroke="#3b82f6"
+                      strokeWidth="2"
+                      pointerEvents="none"
+                    />
+                    {/* Tooltip */}
+                    {isHovered && (
+                      <>
+                        <rect
+                          x={Math.max(x - 50, 10)}
+                          y={y - 40}
+                          width="100"
+                          height="28"
+                          fill="#ffffff"
+                          stroke="#3b82f6"
+                          strokeWidth="1"
+                          rx="4"
+                          opacity="0.95"
+                          pointerEvents="none"
+                        />
+                        <text
+                          x={Math.max(x - 50, 10) + 50}
+                          y={y - 18}
+                          fontSize="12"
+                          fontWeight="600"
+                          fill="#1f2937"
+                          textAnchor="middle"
+                          pointerEvents="none"
+                        >
+                          {d.cost_per_kg.toFixed(2)}
+                        </text>
+                      </>
+                    )}
+                  </g>
                 );
               })}
 
@@ -696,12 +732,143 @@ function ROITab() {
   );
 }
 
+
+function WaterEditForm({ token, row, onClose, onSaved }) {
+  const [waterM3, setWaterM3] = useState('');
+  const [yieldKg, setYieldKg] = useState('');
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState('');
+
+  const inputStyle = {
+    width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+    color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 14
+  };
+
+  const handleSave = async () => {
+  setSaving(true); setError('');
+  try {
+    await apiService.updateWaterUsage(token, row.id, {
+      water_m3: waterM3 ? parseFloat(waterM3) : row.water_m3,
+      yield_kg: yieldKg ? parseFloat(yieldKg) : row.yield_kg,
+    });
+      onSaved();
+    } catch(e) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      {error && <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>{error}</div>}
+      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: 16 }}>Current intensity: <strong>{row.intensity} L/kg</strong>. Leave a field blank to keep the existing value.</p>
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>New Water Used (m³)</label>
+      <input type="number" placeholder="Leave blank to keep current" value={waterM3} onChange={e => setWaterM3(e.target.value)} style={inputStyle} />
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>New Yield (kg)</label>
+      <input type="number" placeholder="Leave blank to keep current" value={yieldKg} onChange={e => setYieldKg(e.target.value)} style={inputStyle} />
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+        <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function WaterLogForm({ token, onClose, onSaved }) {
+  const [estates, setEstates] = useState([]);
+  const [factoryId, setFactoryId] = useState('');
+  const [month, setMonth] = useState('');
+  const [waterM3, setWaterM3] = useState('');
+  const [yieldKg, setYieldKg] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiService.getWaterEstates(token).then(data => {
+      setEstates(data);
+      if (data.length > 0) setFactoryId(data[0].factory_id);
+    });
+  }, [token]);
+
+  const monthOptions = [
+    {v:1,l:'January'},{v:2,l:'February'},{v:3,l:'March'},{v:4,l:'April'},
+    {v:5,l:'May'},{v:6,l:'June'},{v:7,l:'July'},{v:8,l:'August'},
+    {v:9,l:'September'},{v:10,l:'October'},{v:11,l:'November'},{v:12,l:'December'}
+  ];
+
+  const handleSave = async () => {
+    if (!factoryId || !month || !waterM3 || !yieldKg) {
+      setError('All fields are required.'); return;
+    }
+    setSaving(true); setError('');
+    try {
+      await apiService.addWaterUsage(token, {
+        factory_id: factoryId,
+        year: 2026,
+        month: parseInt(month),
+        water_m3: parseFloat(waterM3),
+        yield_kg: parseFloat(yieldKg),
+        track_status: 'on_track'
+      });
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = {
+    width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+    color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 14
+  };
+
+  return (
+    <>
+      {error && <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>{error}</div>}
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Estate</label>
+      <select value={factoryId} onChange={e => setFactoryId(e.target.value)} style={inputStyle}>
+        {estates.map(e => <option key={e.factory_id} value={e.factory_id}>{e.estate}</option>)}
+      </select>
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Month</label>
+      <select value={month} onChange={e => setMonth(e.target.value)} style={inputStyle}>
+        <option value="">Select month…</option>
+        {monthOptions.map(m => <option key={m.v} value={m.v}>{m.l}</option>)}
+      </select>
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Water Used (m³)</label>
+      <input type="number" placeholder="e.g. 7200" value={waterM3} onChange={e => setWaterM3(e.target.value)} style={inputStyle} />
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Yield (kg)</label>
+      <input type="number" placeholder="e.g. 2400000" value={yieldKg} onChange={e => setYieldKg(e.target.value)} style={inputStyle} />
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+        <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </>
+  );
+}
+
+
 /* ── Tab: Water ───────────────────────────────────────────────────────── */
 function WaterTab() {
   const { token } = useAuth();
   const [waterData, setWaterData] = useState([]);
   const [target, setTarget]       = useState(4.5);
   const [loading, setLoading]     = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editRow, setEditRow] = useState(null); //
+  const [deleteRow, setDeleteRow] = useState(null); //
 
   useEffect(() => {
     async function load() {
@@ -718,9 +885,13 @@ function WaterTab() {
 
         const formatted = usage.map(w => ({
           month:     w.month,
+          estate:    w.estate,
+          id:        w.id, //
           intensity: w.intensity_l_per_kg,
+          water_m3:  w.water_m3,          
+          yield_kg:  w.yield_kg, 
           target:    t,
-          status:    w.track_status
+          status:    w.intensity_l_per_kg <= t ? 'on_track' : 'at_risk'
         }));
         setWaterData(formatted);
       } catch (err) {
@@ -748,13 +919,168 @@ function WaterTab() {
         <KpiCard icon="🎯" iconBg="kpi-icon-blue"   label="Annual Goal"     value="-2%"    unit="" deltaLabel="reduction vs last year" />
       </div>
 
+      {/* ── Charts ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
+
+        {/* Line Chart — intensity trend per estate */}
+        <div className="section-card">
+          <div className="section-card-header">
+            <div className="section-card-title">
+              <div className="section-card-title-icon">📈</div>
+              Intensity Trend by Estate
+            </div>
+          </div>
+          <div className="section-card-body">
+            <svg viewBox="0 0 400 200" width="100%" style={{ overflow: 'visible' }}>
+              {/* Grid lines */}
+              {[2, 3, 4, 5].map(v => {
+                const y = 180 - ((v - 2) / 3) * 160;
+                return (
+                  <g key={v}>
+                    <line x1="40" y1={y} x2="390" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" />
+                    <text x="35" y={y + 4} fontSize="10" fill="var(--color-text-muted)" textAnchor="end">{v}</text>
+                  </g>
+                );
+              })}
+              {/* Target line */}
+              {(() => {
+                const ty = 180 - ((target - 2) / 3) * 160;
+                return <line x1="40" y1={ty} x2="390" y2={ty} stroke="var(--color-danger)" strokeDasharray="6 3" strokeWidth="1.5" opacity="0.6" />;
+              })()}
+              {/* Lines per estate */}
+              {Object.entries(
+                waterData.reduce((g, w) => { if (!g[w.estate]) g[w.estate] = []; g[w.estate].push(w); return g; }, {})
+              ).map(([estate, rows], ei) => {
+                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
+                const color = colors[ei % colors.length];
+                const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                const points = rows.map(w => {
+                  const mx = months.indexOf(w.month);
+                  const x = 40 + (mx / 11) * 350;
+                  const y = 180 - ((w.intensity - 2) / 3) * 160;
+                  return `${x},${y}`;
+                }).join(' ');
+                return (
+                  <g key={estate}>
+                    <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    {rows.map(w => {
+                      const mx = months.indexOf(w.month);
+                      const x = 40 + (mx / 11) * 350;
+                      const y = 180 - ((w.intensity - 2) / 3) * 160;
+                      return <circle key={w.month} cx={x} cy={y} r="3" fill={color} />;
+                    })}
+                  </g>
+                );
+              })}
+              {/* Month labels */}
+              {['Jan','Feb','Mar','Apr','May'].map((m, i) => {
+                const x = 40 + (i / 11) * 350;
+                return <text key={m} x={x} y="196" fontSize="10" fill="var(--color-text-muted)" textAnchor="middle">{m}</text>;
+              })}
+            </svg>
+            {/* Legend */}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+              {Object.keys(waterData.reduce((g, w) => { g[w.estate] = 1; return g; }, {})).map((estate, ei) => {
+                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
+                return (
+                  <div key={estate} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                    <div style={{ width: 12, height: 3, borderRadius: 2, background: colors[ei % colors.length] }} />
+                    {estate}
+                  </div>
+                );
+              })}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                <div style={{ width: 12, height: 2, borderRadius: 2, background: 'var(--color-danger)', opacity: 0.6 }} />
+                Target
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bar Chart — compare estates per month */}
+        <div className="section-card">
+          <div className="section-card-header">
+            <div className="section-card-title">
+              <div className="section-card-title-icon">📊</div>
+              Estate Comparison by Month
+            </div>
+          </div>
+          <div className="section-card-body">
+            <svg viewBox="0 0 400 200" width="100%" style={{ overflow: 'visible' }}>
+              {/* Grid lines */}
+              {[2, 3, 4, 5].map(v => {
+                const y = 180 - ((v - 2) / 3) * 160;
+                return (
+                  <g key={v}>
+                    <line x1="40" y1={y} x2="390" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" />
+                    <text x="35" y={y + 4} fontSize="10" fill="var(--color-text-muted)" textAnchor="end">{v}</text>
+                  </g>
+                );
+              })}
+              {/* Bars grouped by month */}
+              {(() => {
+                const months = ['Jan','Feb','Mar','Apr','May'];
+                const estateNames = [...new Set(waterData.map(w => w.estate))];
+                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
+                const groupW = 60;
+                const barW = Math.min(10, (groupW - 4) / estateNames.length);
+                return months.map((month, mi) => {
+                  const gx = 50 + mi * groupW;
+                  return (
+                    <g key={month}>
+                      {estateNames.map((estate, ei) => {
+                        const row = waterData.find(w => w.estate === estate && w.month === month);
+                        if (!row) return null;
+                        const barH = ((row.intensity - 2) / 3) * 160;
+                        const x = gx + ei * (barW + 1);
+                        const y = 180 - barH;
+                        return (
+                          <rect key={estate} x={x} y={y} width={barW} height={barH}
+                            fill={colors[ei % colors.length]} opacity="0.8" rx="1"
+                          />
+                        );
+                      })}
+                      <text x={gx + (estateNames.length * (barW + 1)) / 2} y="196" fontSize="10" fill="var(--color-text-muted)" textAnchor="middle">{month}</text>
+                    </g>
+                  );
+                });
+              })()}
+            </svg>
+            {/* Legend */}
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+              {[...new Set(waterData.map(w => w.estate))].map((estate, ei) => {
+                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
+                return (
+                  <div key={estate} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 2, background: colors[ei % colors.length] }} />
+                    {estate}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="table-wrap" style={{ marginBottom: 'var(--space-6)' }}>
         <div className="table-header-bar">
           <div>
             <div className="table-title">Monthly Water Intensity</div>
             <div className="table-subtitle">Factory water use per kg tea produced · 2026</div>
           </div>
-          <span className="badge badge-success">{onTrack}/{waterData.length} On Track</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span className="badge badge-success">{onTrack}/{waterData.length} On Track</span>
+            <button
+              onClick={() => setShowModal(true)}
+              style={{
+                padding: '7px 16px', borderRadius: 8, border: 'none',
+                background: 'var(--color-primary)', color: '#fff',
+                fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer'
+              }}
+            >
+              + Log Water Data
+            </button>
+          </div>
         </div>
         <table>
           <thead>
@@ -767,30 +1093,63 @@ function WaterTab() {
               <th>Status</th>
             </tr>
           </thead>
+
           <tbody>
-            {waterData.map(w => {
-              const variance = (w.intensity - w.target).toFixed(2);
-              const ok  = w.status === 'on_track';
-              const pct = Math.min(100, (w.intensity / 6) * 100);
-              return (
-                <tr key={w.month}>
-                  <td style={{ fontWeight: 600 }}>{w.month}</td>
-                  <td style={{ fontWeight: 700, fontSize: '1.05rem', color: ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
-                    {w.intensity}
+            {Object.entries(
+              waterData.reduce((groups, w) => {
+              const key = w.estate || 'Unknown';
+              if (!groups[key]) groups[key] = [];
+              groups[key].push(w);
+              return groups;
+              }, {})
+            ).map(([estateName, rows]) => (
+              <>
+                <tr key={`header-${estateName}`} style={{ backgroundColor: 'var(--color-surface-2, #f0f4f8)' }}>
+                  <td colSpan={6} style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text)', padding: '0.6rem 1rem', letterSpacing: '0.03em' }}>
+                    🏡 {estateName}
                   </td>
-                  <td>{w.target}</td>
-                  <td style={{ fontWeight: 600, color: variance > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
-                    {variance > 0 ? '+' : ''}{variance}
-                  </td>
-                  <td style={{ minWidth: 140 }}>
-                    <div className="progress-wrap">
-                      <div className={`progress-bar ${ok ? 'progress-green' : 'progress-amber'}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </td>
-                  <td><span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`}>{ok ? 'On Track' : 'At Risk'}</span></td>
                 </tr>
-              );
-            })}
+                {rows.map(w => {
+                  const variance = (w.intensity - w.target).toFixed(2);
+                  const ok  = w.status === 'on_track';
+                  const pct = Math.min(100, (w.intensity / 6) * 100);
+                  return (
+                    <tr key={`${estateName}-${w.month}`}>
+                      <td style={{ fontWeight: 600, paddingLeft: '2rem' }}>{w.month}</td>
+                      <td style={{ fontWeight: 700, fontSize: '1.05rem', color: ok ? 'var(--color-success)' : 'var(--color-warning)' }}>
+                        {w.intensity}
+                      </td>
+                      <td>{w.target}</td>
+                      <td style={{ fontWeight: 600, color: variance > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}>
+                        {variance > 0 ? '+' : ''}{variance}
+                      </td>
+                      <td style={{ minWidth: 140 }}>
+                        <div className="progress-wrap">
+                          <div className={`progress-bar ${ok ? 'progress-green' : 'progress-amber'}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </td>
+                      <td><span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`}>{ok ? 'On Track' : 'At Risk'}</span></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={() => setEditRow(w)}
+                            style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setDeleteRow(w)}
+                            style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            ))}
           </tbody>
         </table>
       </div>
@@ -801,6 +1160,71 @@ function WaterTab() {
           <span>{worst.month} recorded the highest intensity at {worst.intensity} L/kg. Review factory maintenance logs and irrigation schedules.</span>
         </div>
       )}
+
+      {/* ── Log Water Data Modal ── */}
+      {showModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Log Water Data</div>
+
+            <WaterLogForm token={token} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); setLoading(true); apiService.getWaterUsage(token, 2026).then(usage => { const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));  setWaterData(formatted); }).finally(() => setLoading(false)); }} />
+          </div>
+        </div>
+      )}
+
+
+      {/* ── Edit Modal ── */}
+      {editRow && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Edit — {editRow.estate} {editRow.month}</div>
+            <WaterEditForm
+              token={token}
+              row={editRow}
+              onClose={() => setEditRow(null)}
+              onSaved={() => {
+                setEditRow(null);
+                setLoading(true);
+                apiService.getWaterUsage(token, 2026).then(usage => {
+                  const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));
+                  setWaterData(formatted);
+                }).finally(() => setLoading(false));
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation ── */}
+      {deleteRow && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 8 }}>Delete Entry</div>
+            <p style={{ color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              Are you sure you want to delete <strong>{deleteRow.estate} — {deleteRow.month}</strong>?
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteRow(null)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiService.deleteWaterUsage(token, deleteRow.id);
+                    setDeleteRow(null);
+                    setLoading(true);
+                    const usage = await apiService.getWaterUsage(token, 2026);
+                    setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' })));
+                  } catch(e) { console.error(e); }
+                  finally { setLoading(false); }
+                }}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-danger)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </>
   );
 }
@@ -1380,6 +1804,22 @@ function LabourTab() {
   const [yieldInputsTable, setYieldInputsTable] = useState({});  // { assignmentId: value }
   const [savingYield, setSavingYield]     = useState(false);
 
+  // Group members modal (rotation view: click a group → see assigned people that month)
+  const [groupMembers, setGroupMembers] = useState(null);  // null = closed
+  const openGroupMembers = async (round, groupCode) => {
+    setGroupMembers({ round, group_code: groupCode, loading: true, members: [] });
+    try {
+      const data = await apiService.getRotationMembers(token, estateId, round, groupCode);
+      setGroupMembers({
+        round, group_code: groupCode,
+        block_code: data.block_code, period_start: data.period_start,
+        members: data.members || [], loading: false,
+      });
+    } catch (e) {
+      setGroupMembers({ round, group_code: groupCode, members: [], loading: false, error: e.message });
+    }
+  };
+
   // Employee modal state (null = closed, 'add' = add mode, employee obj = edit mode)
   const [empModal, setEmpModal]     = useState(null);
   const [empForm, setEmpForm]       = useState({
@@ -1631,7 +2071,7 @@ function LabourTab() {
 
   // ── KPIs derived from plan assignments
   const assignments = plan?.assignments || [];
-  const totalWorkers  = assignments.reduce((s, a) => s + (a.group_capacity || 0), 0);
+  const totalWorkers  = assignments.reduce((s, a) => s + (a.allocated_workers ?? a.group_capacity ?? 0), 0);
   const totalTarget   = assignments.reduce((s, a) => s + (a.expected_yield_kg || 0), 0);
   const totalActual   = assignments.reduce((s, a) => s + (a.actual_yield_kg || 0), 0);
   const overallEff    = totalTarget > 0 ? ((totalActual / totalTarget) * 100).toFixed(1) : '—';
@@ -1830,7 +2270,7 @@ function LabourTab() {
                   <tr>
                     <SortHeader label="Block" field="block_code" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Group" field="group_name" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
-                    <SortHeader label="Workers" field="group_capacity" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
+                    <SortHeader label="Workers" field="allocated_workers" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Predicted (kg)" field="predicted_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Target (kg)" field="expected_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
                     <SortHeader label="Actual (kg)" field="actual_yield_kg" sort={assignSort} onSort={(f) => toggleSort(f, setAssignSort)} />
@@ -1953,7 +2393,7 @@ function LabourTab() {
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span>👤</span>
-                            <span style={{ fontWeight: 600 }}>{a.group_capacity || '—'}</span>
+                            <span style={{ fontWeight: 600 }}>{a.allocated_workers != null ? a.allocated_workers : (a.group_capacity || '—')}</span>
                           </div>
                         </td>
                         <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
@@ -2170,39 +2610,39 @@ function LabourTab() {
       {/* ── VIEW: Rotation Matrix ── */}
       {!loading && view === 'rotation' && (
         rotation ? (
-          <div className="table-wrap">
+          <div className="table-wrap" style={{ overflowX: 'auto' }}>
             <div className="table-header-bar">
               <div>
                 <div className="table-title">{rotation.cycle_name}</div>
                 <div className="table-subtitle">
-                  {rotation.total_rounds}-round cycle · currently on Round {rotation.current_round}
+                  {rotation.total_rounds}-round cycle · {rotation.rounds_executed ?? rotation.total_rounds} rounds executed
                 </div>
               </div>
               <span className="badge badge-neutral">{rotation.total_rounds} rounds</span>
             </div>
 
-            {/* Progress indicator */}
+            {/* Progress indicator — shows only executed rounds */}
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
               <div style={{ display: 'flex', gap: 8 }}>
-                {Array.from({ length: rotation.total_rounds }, (_, i) => i + 1).map(rn => (
+                {Array.from({ length: rotation.rounds_executed ?? rotation.total_rounds }, (_, i) => i + 1).map(rn => (
                   <div key={rn} style={{
                     flex: 1, height: 8, borderRadius: 4,
                     background: rn < rotation.current_round  ? 'var(--color-success)'
                               : rn === rotation.current_round ? 'var(--color-primary)'
                               : 'var(--color-surface-2)',
                     transition: 'background 0.3s',
-                  }} title={`Round ${rn}${rn === rotation.current_round ? ' ← current' : ''}`} />
+                  }} title={`${roundToMonth(rn)}${rn === rotation.current_round ? ' ← current' : ''}`} />
                 ))}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                Round {rotation.current_round} of {rotation.total_rounds} — {Math.round((rotation.current_round / rotation.total_rounds) * 100)}% through cycle
+                {roundToMonth(rotation.current_round)} — {Math.round(((rotation.rounds_executed ?? rotation.total_rounds) / rotation.total_rounds) * 100)}% through cycle
               </div>
             </div>
 
-            <table>
+            <table style={{ minWidth: 'max-content', width: '100%' }}>
               <thead>
                 <tr>
-                  <SortHeader label="Round" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
+                  <SortHeader label="Month" field="round" sort={rotSort} onSort={(f) => toggleSort(f, setRotSort)} />
                   {(rotation.matrix[1] || []).map(b => <th key={b.block_code}>{b.block_code}</th>)}
                 </tr>
               </thead>
@@ -2218,7 +2658,7 @@ function LabourTab() {
                       background: isCurrent ? 'rgba(var(--color-primary-rgb, 37,99,235), 0.06)' : '',
                     }}>
                       <td style={{ fontWeight: 700 }}>
-                        Round {rn}
+                        {roundToMonth(rn)}
                         {isCurrent && (
                           <span className="badge badge-success" style={{ marginLeft: 8, fontSize: '0.65rem' }}>current</span>
                         )}
@@ -2226,20 +2666,28 @@ function LabourTab() {
                       {cells.map(c => {
                         const actual = actualByBlock?.[c.block_code];
                         const changed = actual && actual.group_code !== c.group_code;
+                        const groupCode = (actual ? actual.group_code : c.group_code) || c.group_code;
+                        const workers = actual
+                          ? (actual.allocated_workers ?? actual.group_capacity ?? c.capacity)
+                          : c.capacity;
                         return (
                           <td key={c.block_code} style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
-                            {actual ? (
-                              <>
-                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
-                                  {actual.group_code || <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>}
+                            {groupCode ? (
+                              <button
+                                onClick={() => openGroupMembers(parseInt(rn), groupCode)}
+                                title={`View people assigned to ${groupCode} in ${roundToMonth(rn)}`}
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  textAlign: 'left', font: 'inherit', color: 'inherit', width: '100%',
+                                }}
+                              >
+                                <div style={{ fontWeight: 600, color: 'var(--color-primary)', textDecoration: 'underline dotted', textUnderlineOffset: 2 }}>
+                                  {groupCode}
                                 </div>
-                                <div style={{ fontSize: '0.7rem' }}>{actual.group_capacity ?? c.capacity} workers</div>
-                              </>
+                                <div style={{ fontSize: '0.7rem' }}>{workers} workers</div>
+                              </button>
                             ) : (
-                              <>
-                                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>{c.group_code}</div>
-                                <div style={{ fontSize: '0.7rem' }}>{c.capacity} workers</div>
-                              </>
+                              <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>—</span>
                             )}
                           </td>
                         );
@@ -2694,6 +3142,75 @@ function LabourTab() {
                 {planCreateLoading ? (plan ? 'Adding…' : 'Creating…') : (plan ? 'Add Blocks' : 'Create Plan')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Group Members Modal (rotation view: who was assigned to a group that month) ── */}
+      {groupMembers && (
+        <div
+          onClick={() => setGroupMembers(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--color-surface)', borderRadius: 16, padding: 28,
+              width: '100%', maxWidth: 520, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+              maxHeight: '85vh', overflowY: 'auto',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                  {groupMembers.group_code} — {roundToMonth(groupMembers.round)}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                  {groupMembers.block_code ? `Block ${groupMembers.block_code}` : ''}
+                  {groupMembers.loading ? '' : ` · ${groupMembers.members.length} people assigned`}
+                </div>
+              </div>
+              <button
+                onClick={() => setGroupMembers(null)}
+                style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--color-text-muted)', lineHeight: 1 }}
+              >×</button>
+            </div>
+
+            {groupMembers.loading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
+            ) : groupMembers.error ? (
+              <div style={{ padding: 16, color: 'var(--color-danger)' }}>{groupMembers.error}</div>
+            ) : groupMembers.members.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                No snapshot recorded for this group/month.
+              </div>
+            ) : (
+              <table style={{ width: '100%', marginTop: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Code</th>
+                    <th style={{ textAlign: 'left' }}>Name</th>
+                    <th style={{ textAlign: 'left' }}>Role</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupMembers.members.map(m => (
+                    <tr key={m.employee_id}>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{m.employee_code}</td>
+                      <td>{m.full_name}</td>
+                      <td>
+                        <span className={`badge ${m.skill_type === 'supervisor' ? 'badge-success' : 'badge-neutral'}`} style={{ fontSize: '0.65rem' }}>
+                          {m.skill_type}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -4219,6 +4736,13 @@ const tabTitles = {
   labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
   predictions: { title: 'Yield Predictions',  sub: 'ML model forecasts for each block & month' },
   reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
+};
+
+// Convert round number to month name (round 1 = Jan, round 2 = Feb, etc.)
+const roundToMonth = (roundNumber) => {
+  const months = ['', 'January', 'February', 'March', 'April', 'May', 'June',
+                  'July', 'August', 'September', 'October', 'November', 'December'];
+  return months[roundNumber] || `Round ${roundNumber}`;
 };
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
