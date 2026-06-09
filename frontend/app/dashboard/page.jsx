@@ -721,13 +721,12 @@ function WaterEditForm({ token, row, onClose, onSaved }) {
   };
 
   const handleSave = async () => {
-    if (!waterM3 && !yieldKg) { setError('Enter at least one value to update.'); return; }
-    setSaving(true); setError('');
-    try {
-      await apiService.updateWaterUsage(token, row.id, {
-        water_m3: waterM3 ? parseFloat(waterM3) : undefined,
-        yield_kg: yieldKg ? parseFloat(yieldKg) : undefined,
-      });
+  setSaving(true); setError('');
+  try {
+    await apiService.updateWaterUsage(token, row.id, {
+      water_m3: waterM3 ? parseFloat(waterM3) : row.water_m3,
+      yield_kg: yieldKg ? parseFloat(yieldKg) : row.yield_kg,
+    });
       onSaved();
     } catch(e) { setError(e.message); }
     finally { setSaving(false); }
@@ -864,8 +863,10 @@ function WaterTab() {
           estate:    w.estate,
           id:        w.id, //
           intensity: w.intensity_l_per_kg,
+          water_m3:  w.water_m3,          
+          yield_kg:  w.yield_kg, 
           target:    t,
-          status:    w.track_status
+          status:    w.intensity_l_per_kg <= t ? 'on_track' : 'at_risk'
         }));
         setWaterData(formatted);
       } catch (err) {
@@ -1141,7 +1142,7 @@ function WaterTab() {
           <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Log Water Data</div>
 
-            <WaterLogForm token={token} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); setLoading(true); apiService.getWaterUsage(token, 2026).then(usage => { const formatted = usage.map(w => ({ month: w.month, estate: w.estate, intensity: w.intensity_l_per_kg, target, status: w.track_status })); setWaterData(formatted); }).finally(() => setLoading(false)); }} />
+            <WaterLogForm token={token} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); setLoading(true); apiService.getWaterUsage(token, 2026).then(usage => { const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));  setWaterData(formatted); }).finally(() => setLoading(false)); }} />
           </div>
         </div>
       )}
@@ -1160,7 +1161,7 @@ function WaterTab() {
                 setEditRow(null);
                 setLoading(true);
                 apiService.getWaterUsage(token, 2026).then(usage => {
-                  const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, intensity: w.intensity_l_per_kg, target, status: w.track_status }));
+                  const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));
                   setWaterData(formatted);
                 }).finally(() => setLoading(false));
               }}
@@ -1186,7 +1187,7 @@ function WaterTab() {
                     setDeleteRow(null);
                     setLoading(true);
                     const usage = await apiService.getWaterUsage(token, 2026);
-                    setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, intensity: w.intensity_l_per_kg, target, status: w.track_status })));
+                    setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' })));
                   } catch(e) { console.error(e); }
                   finally { setLoading(false); }
                 }}

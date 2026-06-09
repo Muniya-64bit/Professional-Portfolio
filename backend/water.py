@@ -30,7 +30,7 @@ def get_water_status():
             'water_m3':          float(row[4]),
             'yield_kg':          float(row[5]),
             'intensity_l_per_kg': round(float(row[6]) * 1000, 3) if row[6] else None,
-            'baseline_intensity': float(row[7]) * 1000 if row[7] else None,
+            'baseline_intensity': round(float(row[7]) * 1000, 3) if row[7] else None,
             'track_status':      row[8]
         })
 
@@ -156,57 +156,154 @@ def get_water_estates():
 @water_bp.route('/api/water/usage', methods=['POST'])
 @token_required
 def add_water_usage():
-    data       = request.get_json()
+    data = request.get_json()
+
     factory_id = data.get('factory_id')
     year       = data.get('year')
     month      = data.get('month')
     water_m3   = data.get('water_m3')
     yield_kg   = data.get('yield_kg')
-    status     = data.get('track_status', 'on_track')
 
     if not all([factory_id, year, month, water_m3, yield_kg]):
         return jsonify({'error': 'factory_id, year, month, water_m3, yield_kg are required'}), 400
 
+    try:
+        water_m3 = float(water_m3)
+        yield_kg = float(yield_kg)
+        year = int(year)
+        month = int(month)
+    except ValueError:
+        return jsonify({'error': 'Invalid numeric values provided'}), 400
+
+    if yield_kg <= 0:
+        return jsonify({'error': 'yield_kg must be greater than 0'}), 400
+
     conn = get_db()
-    cur  = conn.cursor()
-    cur.execute("""
-        INSERT INTO water_usage (factory_id, year, month, water_m3, yield_kg, track_status)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        RETURNING id
-    """, (factory_id, year, month, water_m3, yield_kg, status))
-    new_id = cur.fetchone()[0]
-    conn.commit()
-    cur.close()
-    conn.close()
+    cur = conn.cursor()
 
-    return jsonify({'message': 'Water usage recorded', 'id': str(new_id)}), 201
+    try:
+        # ── fetch baseline ─────────────────────────────
+        cur.execute("""
+            SELECT baseline_intensity, annual_target_pct
+            FROM water_baseline
+            WHERE factory_id = %s
+        """, (factory_id,))
 
+        baseline = cur.fetchone()
 
-# ── PUT /api/water/usage/<id> ────────────────────────────────────────────
+        if not baseline:
+            return jsonify({'error': 'Baseline not configured'}), 404
+
+        baseline_intensity = float(baseline[0])
+        annual_target_pct  = float(baseline[1])
+
+        # ── compute intensity (m³/kg) ─────────────────
+        current_intensity = water_m3 / yield_kg
+
+        target_intensity = baseline_intensity * (1 - annual_target_pct / 100)
+
+        status = 'on_track' if current_intensity <= target_intensity else 'at_risk'
+
+        # ── insert ─────────────────────────────────────
+        cur.execute("""
+            INSERT INTO water_usage (
+                factory_id, year, month, water_m3, yield_kg, track_status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (factory_id, year, month, water_m3, yield_kg, status))
+
+        new_id = cur.fetchone()[0]
+        conn.commit()
+
+        return jsonify({
+            'message': 'Water usage recorded',
+            'id': str(new_id),
+            'track_status': status
+        }), 201
+
+    finally:
+        cur.close()
+        conn.close()
+
 @water_bp.route('/api/water/usage/<usage_id>', methods=['PUT'])
 @token_required
 def update_water_usage(usage_id):
-    data     = request.get_json()
+    data = request.get_json()
+
     water_m3 = data.get('water_m3')
     yield_kg = data.get('yield_kg')
-    status   = data.get('track_status')
+
+    if water_m3 is None or yield_kg is None:
+        return jsonify({'error': 'water_m3 and yield_kg are required'}), 400
+
+    try:
+        water_m3 = float(water_m3)
+        yield_kg = float(yield_kg)
+    except ValueError:
+        return jsonify({'error': 'Invalid numeric values'}), 400
+
+    if yield_kg <= 0:
+        return jsonify({'error': 'yield_kg must be greater than 0'}), 400
 
     conn = get_db()
-    cur  = conn.cursor()
-    cur.execute("""
-        UPDATE water_usage
-        SET water_m3     = COALESCE(%s, water_m3),
-            yield_kg     = COALESCE(%s, yield_kg),
-            track_status = COALESCE(%s, track_status),
-            updated_at   = NOW()
-        WHERE id = %s
-    """, (water_m3, yield_kg, status, usage_id))
-    conn.commit()
-    cur.close()
-    conn.close()
+    cur = conn.cursor()
 
-    return jsonify({'message': 'Updated successfully'}), 200
+    try:
+        # ── 1. Get factory_id from usage record (CRITICAL FIX)
+        cur.execute("""
+            SELECT factory_id
+            FROM water_usage
+            WHERE id = %s
+        """, (usage_id,))
 
+        usage_row = cur.fetchone()
+        if not usage_row:
+            return jsonify({'error': 'Water usage record not found'}), 404
+
+        factory_id = usage_row[0]
+
+        # ── 2. Get baseline using factory_id
+        cur.execute("""
+            SELECT baseline_intensity, annual_target_pct
+            FROM water_baseline
+            WHERE factory_id = %s
+        """, (factory_id,))
+
+        baseline = cur.fetchone()
+        if not baseline:
+            return jsonify({'error': 'Baseline not configured'}), 404
+
+        baseline_intensity = float(baseline[0])
+        annual_target_pct  = float(baseline[1])
+
+        # ── 3. Compute intensity (NO *1000)
+        current_intensity = water_m3 / yield_kg
+
+        target_intensity = baseline_intensity * (1 - annual_target_pct / 100)
+
+        status = 'on_track' if current_intensity <= target_intensity else 'at_risk'
+
+        # ── 4. Update record
+        cur.execute("""
+            UPDATE water_usage
+            SET water_m3     = COALESCE(%s, water_m3),
+                yield_kg     = COALESCE(%s, yield_kg),
+                track_status = %s,
+                updated_at   = NOW()
+            WHERE id = %s
+        """, (water_m3, yield_kg, status, usage_id))
+
+        conn.commit()
+
+        return jsonify({
+            'message': 'Updated successfully',
+            'track_status': status
+        }), 200
+
+    finally:
+        cur.close()
+        conn.close()
 
 @water_bp.route('/api/water/usage/<usage_id>', methods=['DELETE'])
 @token_required
