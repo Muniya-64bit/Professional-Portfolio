@@ -43,94 +43,180 @@ def _first_of_month(d):
     return d.replace(day=1)
 
 
+def _crop_year_start(reference_date, crop_month, crop_day):
+    """Return the start date of the crop year that contains reference_date."""
+    if (reference_date.month, reference_date.day) >= (crop_month, crop_day):
+        return date(reference_date.year, crop_month, crop_day)
+    return date(reference_date.year - 1, crop_month, crop_day)
+
+
+# Day-offset within a block per product — ensures agronomic sequencing and
+# spreads entries across the month rather than bunching on period_start.
+PRODUCT_APPLICATION_ORDER = {
+    'DOLOMITE': 0, 'RPR': 1, 'EP_GOLD': 2, 'MOP': 3, 'T0_200': 4, 'U750': 5,
+}
+
+
 def _generate_entries_for_schedule(cur, schedule_id, estate_id, period_start, today=None):
     """Generate fertilizer_schedule_entry rows for a monthly schedule run.
 
-    Guard conditions (all three must pass for an entry to be inserted):
-      1. Block area guard   — skip blocks with NULL / 0 area_hectares.
-      2. Idempotency guard  — skip if an entry already exists for
-                              (schedule_id, block_id, programme_id).
-      3. Over-fertilization guard — skip if the last actual application of that
-                              fertilizer on that block falls within the current
-                              interval (applied too recently).
+    Temporal anchor logic:
+      - application_no chains are anchored to the estate's crop year start.
+      - For blocks with existing history, the per-product anchor is the last
+        actual application date for that fertilizer type.
+      - For blocks that have never been fertilized at all (first-ever), the
+        first programme step of each product is scheduled at period_start plus
+        a distribution offset so new blocks enter the rotation immediately.
+      - At most one entry per product per block is emitted per month.
 
-    Returns a counters dict: inserted / skipped_existing / skipped_area / skipped_recent.
+    Guards:
+      1. Block area — skip blocks with NULL / 0 area_hectares.
+      2. Idempotency — skip if entry already exists for (schedule_id, block_id, programme_id).
+      Guard 3 (over-fertilization) is implicit: recent last_date pushes the
+      chain past period_end so no entry is emitted.
+
+    Returns: dict with inserted / skipped_existing / skipped_area / skipped_no_match.
     """
     if today is None:
         today = date.today()
 
-    counters = dict(inserted=0, skipped_existing=0, skipped_area=0, skipped_recent=0)
+    counters = dict(inserted=0, skipped_existing=0, skipped_area=0, skipped_no_match=0)
 
+    # Fetch estate crop year config (defaults to April 1 if columns don't exist yet)
+    try:
+        cur.execute("""
+            SELECT crop_year_start_month, crop_year_start_day FROM estate WHERE id = %s
+        """, (estate_id,))
+        estate_row = cur.fetchone()
+        crop_month = int(estate_row[0]) if estate_row else 4
+        crop_day   = int(estate_row[1]) if estate_row else 1
+    except Exception:
+        crop_month, crop_day = 4, 1
+
+    # Month bounds
+    next_month_first = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    period_end    = next_month_first - timedelta(days=1)
+    days_in_month = period_end.day
+    crop_start    = _crop_year_start(period_start, crop_month, crop_day)
+
+    # Blocks ordered by code → consistent rotation_index across regenerations
     cur.execute("""
         SELECT b.id, b.area_hectares, b.growth_stage, b.zone
         FROM   block b
-        WHERE  b.estate_id = %s
+        WHERE  b.estate_id        = %s
+          AND  b.area_hectares IS NOT NULL
+          AND  b.area_hectares    > 0
+        ORDER  BY b.block_code
     """, (estate_id,))
     blocks = cur.fetchall()
+    total_blocks = len(blocks)
 
-    for block_id, area_ha, growth_stage, zone in blocks:
-        # Guard 1: block must have a positive area
+    for rotation_index, (block_id, area_ha, growth_stage, zone) in enumerate(blocks):
+        # Guard 1 (belt-and-suspenders after WHERE filter)
         if not area_ha or float(area_ha) <= 0:
             counters['skipped_area'] += 1
             continue
 
-        # Programme steps that apply to this block's zone + growth stage
+        # Block-level first-ever check (no history across ANY product)
+        cur.execute("SELECT COUNT(*) FROM fertilizer_application WHERE block_id = %s",
+                    (block_id,))
+        is_first_ever = (cur.fetchone()[0] == 0)
+
+        # Distribution offset: spread blocks evenly across the month
+        block_offset = int((rotation_index / max(total_blocks, 1)) * days_in_month)
+
+        # Fetch programme steps for this block filtered by zone + growth_stage,
+        # joined to fertilizer_type for the product code used in ordering
         cur.execute("""
-            SELECT fp.id, fp.fertilizer_type_id, fp.application_no,
-                   fp.interval_weeks, fp.rate_kg_per_ha
+            SELECT fp.id, fp.fertilizer_type_id, ft.code AS ft_code,
+                   fp.application_no, fp.interval_weeks, fp.rate_kg_per_ha
             FROM   fertilizer_programme fp
+            JOIN   fertilizer_type ft ON ft.id = fp.fertilizer_type_id
             WHERE  fp.estate_id   = %s
               AND  fp.is_active   = true
               AND  (fp.zone_override       IS NULL OR fp.zone_override       = %s)
               AND  (fp.growth_stage_filter IS NULL OR fp.growth_stage_filter = %s)
             ORDER  BY fp.fertilizer_type_id, fp.application_no
         """, (estate_id, zone, growth_stage))
-        steps = cur.fetchall()
+        all_steps = cur.fetchall()
 
-        for prog_id, fert_type_id, _app_no, interval_weeks, rate_kg_per_ha in steps:
-            # Guard 2: idempotency — one entry per (schedule, block, programme step)
+        # Group steps by fertilizer_type_id, preserving application_no order
+        steps_by_product = {}
+        for row in all_steps:
+            steps_by_product.setdefault(row[1], []).append(row)
+
+        # Sort product groups by PRODUCT_APPLICATION_ORDER for consistent offsets
+        def _product_sort_key(ftype_id):
+            ft_code = steps_by_product[ftype_id][0][2]
+            return PRODUCT_APPLICATION_ORDER.get(ft_code, 99)
+
+        for product_index, ftype_id in enumerate(
+            sorted(steps_by_product.keys(), key=_product_sort_key)
+        ):
+            steps = steps_by_product[ftype_id]  # sorted by application_no
+            ft_code = steps[0][2]
+            product_offset = PRODUCT_APPLICATION_ORDER.get(ft_code, product_index)
+
+            emit_prog_id  = None
+            emit_due_date = None
+            emit_rate     = None
+            skip_existing = False
+
+            if is_first_ever:
+                # New block — schedule the first step immediately at distributed date
+                first_step    = steps[0]
+                emit_prog_id  = first_step[0]
+                emit_rate     = first_step[5]
+                raw_date      = period_start + timedelta(days=block_offset + product_offset)
+                emit_due_date = min(raw_date, period_end)
+            else:
+                # Walk the application_no chain; emit the step that falls in this month
+                cur.execute("""
+                    SELECT MAX(application_date)
+                    FROM   fertilizer_application
+                    WHERE  block_id           = %s
+                      AND  fertilizer_type_id = %s
+                """, (block_id, ftype_id))
+                last_date = (cur.fetchone() or [None])[0]
+
+                anchor = last_date if last_date else crop_start
+                for prog_id, _, _, _app_no, interval_weeks, rate_kg_per_ha in steps:
+                    anchor = anchor + timedelta(weeks=interval_weeks)
+                    if period_start <= anchor <= period_end:
+                        emit_prog_id  = prog_id
+                        emit_due_date = anchor
+                        emit_rate     = rate_kg_per_ha
+                        break
+
+            if emit_prog_id is None:
+                counters['skipped_no_match'] += 1
+                continue
+
+            # Guard 2: idempotency
             cur.execute("""
                 SELECT id FROM fertilizer_schedule_entry
-                WHERE  schedule_id  = %s
-                  AND  block_id     = %s
-                  AND  programme_id = %s
-            """, (schedule_id, block_id, prog_id))
+                WHERE  schedule_id = %s AND block_id = %s AND programme_id = %s
+            """, (schedule_id, block_id, emit_prog_id))
             if cur.fetchone():
                 counters['skipped_existing'] += 1
                 continue
 
-            # Find the last actual application of this fertilizer on this block
-            cur.execute("""
-                SELECT MAX(application_date)
-                FROM   fertilizer_application
-                WHERE  block_id           = %s
-                  AND  fertilizer_type_id = %s
-            """, (block_id, fert_type_id))
-            last_date = (cur.fetchone() or [None])[0]
-
-            if last_date is None:
-                due_date = period_start
-            else:
-                due_date = last_date + timedelta(weeks=interval_weeks)
-                # Guard 3: applied within the current interval → too soon
-                if last_date >= (today - timedelta(weeks=interval_weeks)):
-                    counters['skipped_recent'] += 1
-                    continue
-
-            # Derive initial status
-            if due_date < today:
+            # Derive status from due_date vs today
+            if emit_due_date < today:
                 status = 'overdue'
-            elif due_date == today:
+            elif emit_due_date == today:
                 status = 'due'
             else:
                 status = 'pending'
 
             cur.execute("""
                 INSERT INTO fertilizer_schedule_entry
-                    (schedule_id, block_id, programme_id, due_date, status, scheduled_rate_kg_per_ha)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (schedule_id, block_id, programme_id, due_date, status,
+                     scheduled_rate_kg_per_ha, growth_stage_at_generation)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (schedule_id, block_id, programme_id) DO NOTHING
-            """, (schedule_id, block_id, prog_id, due_date, status, rate_kg_per_ha))
+            """, (schedule_id, block_id, emit_prog_id, emit_due_date,
+                  status, emit_rate, growth_stage))
             if cur.rowcount:
                 counters['inserted'] += 1
             else:

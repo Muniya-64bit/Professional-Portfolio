@@ -1404,6 +1404,7 @@ def list_estates():
         with conn.cursor() as cur:
             sql = """
                 SELECT e.id, e.name, e.region, e.total_blocks,
+                       e.crop_year_start_month, e.crop_year_start_day,
                        COUNT(b.id) AS block_count
                 FROM estate e
                 LEFT JOIN block b ON b.estate_id = e.id
@@ -1557,19 +1558,25 @@ def create_estate():
     if missing:
         return jsonify({'error': f'Missing: {", ".join(missing)}'}), 400
 
+    crop_month = int(data.get('crop_year_start_month') or 4)
+    crop_day   = int(data.get('crop_year_start_day')   or 1)
+
     conn = _db()
     if not conn:
         return jsonify({'error': 'Database unavailable'}), 503
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO estate (name, region, total_blocks)
-                VALUES (%s, %s, 0)
-                RETURNING id, name, region
-            """, (data['name'], data['region']))
+                INSERT INTO estate (name, region, total_blocks,
+                                    crop_year_start_month, crop_year_start_day)
+                VALUES (%s, %s, 0, %s, %s)
+                RETURNING id, name, region, crop_year_start_month, crop_year_start_day
+            """, (data['name'], data['region'], crop_month, crop_day))
             row = cur.fetchone()
             conn.commit()
-        return jsonify({'id': str(row[0]), 'name': row[1], 'region': row[2], 'message': 'Estate created'}), 201
+        return jsonify({'id': str(row[0]), 'name': row[1], 'region': row[2],
+                        'crop_year_start_month': row[3], 'crop_year_start_day': row[4],
+                        'message': 'Estate created'}), 201
     except Exception as e:
         conn.rollback()
         return _db_err(e)
@@ -1583,7 +1590,7 @@ def create_estate():
 def update_estate(estate_id):
     """PUT /api/labour/estates/<id> — update estate details."""
     data = request.get_json() or {}
-    allowed = {'name', 'region'}
+    allowed = {'name', 'region', 'crop_year_start_month', 'crop_year_start_day'}
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:
         return jsonify({'error': 'No valid fields'}), 400

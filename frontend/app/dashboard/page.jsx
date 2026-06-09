@@ -1343,18 +1343,17 @@ function FertilizerTab({ onOverdueChange }) {
       .finally(() => setHistoryLoading(false));
   }, [subTab, token, estateId]);
 
-  const nextMonthStr = (() => {
-    const d = new Date();
-    const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
-    const m = d.getMonth() === 11 ? 1 : d.getMonth() + 2;
-    return `${y}-${String(m).padStart(2, '0')}-01`;
-  })();
-
   const fmtMonth = iso => {
     if (!iso) return '';
     const [y, mo] = iso.split('-');
     return new Date(y, mo - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
   };
+
+  const fertMonthOptions = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + i);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+  });
+  const [selectedMonth, setSelectedMonth] = useState(fertMonthOptions[1]);
 
   const handleGenerate = async () => {
     if (!estateId) return;
@@ -1362,7 +1361,7 @@ function FertilizerTab({ onOverdueChange }) {
     try {
       const result = await apiService.generateFertilizerScheduleForMonth(token, {
         estate_id: estateId,
-        period_start: nextMonthStr,
+        period_start: selectedMonth,
       });
       setGenResult(result);
       const hdrs = await apiService.getFertilizerSchedules(token, estateId);
@@ -1372,7 +1371,7 @@ function FertilizerTab({ onOverdueChange }) {
       if (!selectedScheduleId && result.schedule_id) setSelectedScheduleId(result.schedule_id);
     } catch (e) {
       if (e.message && e.message.includes('already exists')) {
-        setError(`A schedule for ${fmtMonth(nextMonthStr)} already exists. Manage it in the Fertilizer Schedules tab.`);
+        setError(`A schedule for ${fmtMonth(selectedMonth)} already exists. Manage it in the Fertilizer Schedules tab.`);
       } else {
         setError(e.message);
       }
@@ -1494,10 +1493,19 @@ function FertilizerTab({ onOverdueChange }) {
         )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           {canWrite && (
-            <button onClick={handleGenerate} disabled={generating || !estateId}
-              style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
-              {generating ? 'Generating…' : `⚡ Generate ${fmtMonth(nextMonthStr)}`}
-            </button>
+            <>
+              <div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Month</div>
+                <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}>
+                  {fertMonthOptions.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
+                </select>
+              </div>
+              <button onClick={handleGenerate} disabled={generating || !estateId}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
+                {generating ? 'Generating…' : '⚡ Generate'}
+              </button>
+            </>
           )}
           {canWrite && (
             <button onClick={openManualModal} disabled={!estateId || blocks.length === 0}
@@ -1677,7 +1685,7 @@ function FertilizerTab({ onOverdueChange }) {
           <div style={{ fontSize: '2rem', marginBottom: 10 }}>🌱</div>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>No schedules for this estate</div>
           <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            {canWrite ? `Click "Generate ${fmtMonth(nextMonthStr)}" to create the first schedule.` : 'No schedule has been generated yet.'}
+            {canWrite ? 'Select a month and click Generate to create the first schedule.' : 'No schedule has been generated yet.'}
           </div>
         </div>
       )}
@@ -3832,7 +3840,7 @@ function EstateBlocksTab() {
   const [error, setError] = useState('');
   const [editingEstate, setEditingEstate] = useState(null);
   const [editingBlock, setEditingBlock] = useState(null);
-  const [estateForm, setEstateForm] = useState({ name: '', region: '' });
+  const [estateForm, setEstateForm] = useState({ name: '', region: '', crop_year_start_month: 4, crop_year_start_day: 1 });
   const [blockForm, setBlockForm] = useState({ block_code: '', soil_type: '', growth_stage: '', area_hectares: '', state: 'active' });
   const [saving, setSaving] = useState(false);
   const stateOptions = ['preparation', 'planting', 'growing', 'harvesting', 'fallow', 'maintenance', 'active'];
@@ -3857,7 +3865,7 @@ function EstateBlocksTab() {
       } else {
         await apiService.createEstate(token, estateForm);
       }
-      setEditingEstate(null); setEstateForm({ name: '', region: '' });
+      setEditingEstate(null); setEstateForm({ name: '', region: '', crop_year_start_month: 4, crop_year_start_day: 1 });
       const updated = await apiService.getEstates(token);
       setEstates(updated); setError('');
       if (editingEstate === 'new' && updated.length > 0) setSelectedEstate(updated[updated.length - 1]);
@@ -3908,12 +3916,21 @@ function EstateBlocksTab() {
           <div className="table-header-bar"><div><div className="table-title">Estates</div><div className="table-subtitle">{estates.length} total</div></div></div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 'var(--space-4)' }}>
             {(canWrite || isManager) && (
-              <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '' }); }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', width: '100%' }}>+ New Estate</button>
+              <button onClick={() => { setEditingEstate('new'); setEstateForm({ name: '', region: '', crop_year_start_month: 4, crop_year_start_day: 1 }); }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', width: '100%' }}>+ New Estate</button>
             )}
             {editingEstate && (
               <div style={{ padding: 'var(--space-3)', background: 'var(--color-surface)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
                 <input type="text" placeholder="Name" value={estateForm.name} onChange={e => setEstateForm(p => ({ ...p, name: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
                 <input type="text" placeholder="Region" value={estateForm.region} onChange={e => setEstateForm(p => ({ ...p, region: e.target.value }))} style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 8 }} />
+                <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>Crop Year Start</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 6, marginBottom: 8 }}>
+                  <select value={estateForm.crop_year_start_month} onChange={e => setEstateForm(p => ({ ...p, crop_year_start_month: Number(e.target.value) }))} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem' }}>
+                    {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
+                      <option key={i+1} value={i+1}>{m}</option>
+                    ))}
+                  </select>
+                  <input type="number" min="1" max="31" placeholder="Day" value={estateForm.crop_year_start_day} onChange={e => setEstateForm(p => ({ ...p, crop_year_start_day: Number(e.target.value) }))} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem' }} />
+                </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button onClick={() => { setEditingEstate(null); setEstateForm({ name: '', region: '' }); }} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Cancel</button>
                   <button onClick={handleSaveEstate} disabled={saving} style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>{saving ? '...' : 'Save'}</button>
@@ -3927,7 +3944,7 @@ function EstateBlocksTab() {
                   <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: 6 }}>{e.region} • {e.block_count || 0} blocks</div>
                   {(canWrite || isManager) && (
                     <div style={{ display: 'flex', gap: 4 }}>
-                      <button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region }); }} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Edit</button>
+                      <button onClick={() => { setEditingEstate(e); setEstateForm({ name: e.name, region: e.region, crop_year_start_month: e.crop_year_start_month || 4, crop_year_start_day: e.crop_year_start_day || 1 }); }} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Edit</button>
                       <button onClick={() => handleDeleteEstate(e.id)} style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Del</button>
                     </div>
                   )}
@@ -3999,23 +4016,22 @@ function FertilizerScheduleMgmtTab() {
   const [schedules, setSchedules]         = useState([]);
   const [loading, setLoading]             = useState(false);
   const [generating, setGenerating]       = useState(false);
-  const [deleting, setDeleting]           = useState(null); // scheduleId being deleted
-  const [confirmDelete, setConfirmDelete] = useState(null); // schedule obj
+  const [deleting, setDeleting]           = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [error, setError]                 = useState('');
   const [genResult, setGenResult]         = useState(null);
-
-  const nextMonthStr = (() => {
-    const d = new Date();
-    const y = d.getMonth() === 11 ? d.getFullYear() + 1 : d.getFullYear();
-    const m = d.getMonth() === 11 ? 1 : d.getMonth() + 2;
-    return `${y}-${String(m).padStart(2, '0')}-01`;
-  })();
 
   const fmtMonth = iso => {
     if (!iso) return '';
     const [y, mo] = iso.split('-');
     return new Date(y, mo - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
   };
+
+  const mgmtMonthOptions = Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + i);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;
+  });
+  const [selectedMonth, setSelectedMonth] = useState(mgmtMonthOptions[1]);
 
   useEffect(() => {
     if (!token) return;
@@ -4044,13 +4060,13 @@ function FertilizerScheduleMgmtTab() {
     try {
       const result = await apiService.generateFertilizerScheduleForMonth(token, {
         estate_id: estateId,
-        period_start: nextMonthStr,
+        period_start: selectedMonth,
       });
       setGenResult(result);
       loadSchedules();
     } catch (e) {
       if (e.message && e.message.includes('already exists')) {
-        setError(`A schedule for ${fmtMonth(nextMonthStr)} already exists. Delete it first to regenerate.`);
+        setError(`A schedule for ${fmtMonth(selectedMonth)} already exists. Delete it first to regenerate.`);
       } else {
         setError(e.message);
       }
@@ -4084,10 +4100,19 @@ function FertilizerScheduleMgmtTab() {
           </select>
         </div>
         {canWrite && (
-          <button onClick={handleGenerate} disabled={generating || !estateId}
-            style={{ marginLeft: 'auto', padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1 }}>
-            {generating ? 'Generating…' : `⚡ Generate ${fmtMonth(nextMonthStr)}`}
-          </button>
+          <>
+            <div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Month</div>
+              <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text)', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}>
+                {mgmtMonthOptions.map(m => <option key={m} value={m}>{fmtMonth(m)}</option>)}
+              </select>
+            </div>
+            <button onClick={handleGenerate} disabled={generating || !estateId}
+              style={{ padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', background: generating ? '#6b7280' : 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem', opacity: !estateId ? 0.5 : 1, alignSelf: 'flex-end' }}>
+              {generating ? 'Generating…' : `⚡ Generate ${fmtMonth(selectedMonth)}`}
+            </button>
+          </>
         )}
       </div>
 
@@ -4114,7 +4139,7 @@ function FertilizerScheduleMgmtTab() {
           <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
         ) : schedules.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-            No schedules yet.{canWrite && ` Click "Generate ${fmtMonth(nextMonthStr)}" to create the first one.`}
+            No schedules yet.{canWrite && ' Select a month and click Generate to create the first one.'}
           </div>
         ) : (
           <table>
