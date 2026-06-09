@@ -935,10 +935,17 @@ nav a:hover {
   margin-left: auto;
   font-size: 0.6875rem;
   font-weight: 700;
-  padding: 0.125rem 0.5rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
   border-radius: var(--radius-full);
-  background: rgba(255,255,255,0.2);
-  color: white;
+  background: #ef4444;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .dash-sidebar-footer {
