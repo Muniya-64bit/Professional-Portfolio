@@ -52,8 +52,7 @@ export default function Home() {
             </div>
 
             <div className="nav-actions">
-              <a href="/auth/login" className="btn btn-secondary btn-sm">Login</a>
-              <a href="/auth/signup" className="btn btn-primary btn-sm">Get Started</a>
+              <a href="/auth/login" className="btn btn-primary btn-sm">Login</a>
             </div>
           </nav>
         </div>
@@ -75,11 +74,8 @@ export default function Home() {
             and allocate labour — all from a single dashboard.
           </p>
           <div className="hero-actions">
-            <a href="/auth/signup" className="btn-hero-primary">
-              Start Free →
-            </a>
-            <a href="/auth/login" className="btn-hero-outline">
-              Sign In
+            <a href="/auth/login" className="btn-hero-primary">
+              Sign In →
             </a>
           </div>
 
@@ -184,8 +180,7 @@ export default function Home() {
             Login to access your dashboard and start making data-driven decisions today.
           </p>
           <div className="hero-actions" style={{ marginTop: 0 }}>
-            <a href="/auth/signup" className="btn-hero-primary">Create Account →</a>
-            <a href="/auth/login" className="btn-hero-outline">Login</a>
+            <a href="/auth/login" className="btn-hero-primary">Login →</a>
           </div>
         </div>
       </section>
@@ -219,7 +214,6 @@ export default function Home() {
               <div className="footer-col-title">Account</div>
               <div className="footer-links">
                 <a href="/auth/login">Login</a>
-                <a href="/auth/signup">Sign Up</a>
                 <a href="/dashboard">Dashboard</a>
               </div>
             </div>

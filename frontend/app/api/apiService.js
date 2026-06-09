@@ -36,11 +36,27 @@ export const apiService = {
     }
   },
 
-  // Public (unauthenticated) estate list for the signup estate selector
-  async getPublicEstates() {
-    const response = await fetch(`${API_BASE}/estates/public`);
+  // Authenticated estate list (used in admin user creation form)
+  async getPublicEstates(token) {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const response = await fetch(`${API_BASE}/estates/public`, { headers });
     if (!response.ok) throw new Error('Failed to load estates');
     return await response.json();
+  },
+
+  // Admin-only: list all system users
+  async getSystemUsers(token) {
+    return this._auth(token, 'GET', '/auth/users');
+  },
+
+  // Admin-only: create a system user
+  async createSystemUser(token, data) {
+    return this._auth(token, 'POST', '/auth/users', data);
+  },
+
+  // Admin-only: check scheduler status
+  async getSchedulerStatus(token) {
+    return this._auth(token, 'GET', '/scheduler/status');
   },
 
   async login(email, password) {
@@ -140,6 +156,24 @@ export const apiService = {
     } catch (error) {
       throw error;
     }
+  },
+
+  // ── Auth helpers ──────────────────────────────────────────────────────────
+
+  async _auth(token, method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`${API_BASE}${path}`, opts);
+    if (res.status === 401) {
+      if (_onUnauthorized) _onUnauthorized();
+      throw new Error('Session expired. Please log in again.');
+    }
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
   },
 
   // ── Labour Planner ────────────────────────────────────────────────────────

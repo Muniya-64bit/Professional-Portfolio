@@ -788,7 +788,7 @@ nav a:hover {
   left: 0;
   height: 100vh;
   z-index: 50;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
   transition: width 0.25s ease, transform var(--ease-slow);
 }
@@ -846,11 +846,34 @@ nav a:hover {
 }
 
 .dash-nav {
-  flex: 1;
-  padding: var(--space-5) var(--space-3);
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: calc(100vh - 90px - 52px); /* 100vh minus logo minus toggle */
+  padding: var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+
+.dash-nav::-webkit-scrollbar {
+  width: 4px;
+}
+
+.dash-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dash-nav::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 4px;
+}
+
+.dash-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.35);
 }
 
 .dash-nav-label {
@@ -859,7 +882,7 @@ nav a:hover {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: rgba(255,255,255,0.4);
-  padding: var(--space-4) var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   transition: opacity 0.2s ease;
@@ -875,12 +898,12 @@ nav a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 0.625rem var(--space-3);
+  padding: 0.45rem var(--space-3);
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--ease-base);
   color: rgba(255,255,255,0.7);
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 500;
   border: none;
   background: none;

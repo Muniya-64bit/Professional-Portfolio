@@ -9,7 +9,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from auth import (
     signup_user, login_user, get_user_profile, token_required,
-    verify_token, validate_password_strength, rate_limit, invalidate_token
+    verify_token, validate_password_strength, rate_limit, invalidate_token,
+    is_admin, admin_required, get_all_users, create_user_by_admin,
 )
 from labour import labour_bp
 from water import water_bp
@@ -23,8 +24,8 @@ from predictions import predictions_bp
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Roles a user may self-select at signup (testing convenience).
-ALLOWED_SIGNUP_ROLES = {'admin', 'estate_manager', 'manager'}
+# Roles that admin may assign when creating a system account.
+ALLOWED_SYSTEM_ROLES = {'admin', 'estate_manager', 'manager'}
 
 app = Flask(__name__)
 CORS(app, 
@@ -53,9 +54,40 @@ def home():
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/api/scheduler/status", methods=["GET"])
+@token_required
+def scheduler_status():
+    """Return the scheduler's running state, next fire time, and last run result."""
+    from scheduler import _scheduler, _last_run, SCHEDULER_TIMEZONE
+    if _scheduler is None or not _scheduler.running:
+        return jsonify({
+            'running': False,
+            'timezone': SCHEDULER_TIMEZONE,
+            'jobs': [],
+            'last_run': _last_run,
+        }), 200
+
+    jobs = []
+    for job in _scheduler.get_jobs():
+        next_run = job.next_run_time
+        jobs.append({
+            'id':           job.id,
+            'next_run_utc': next_run.isoformat() if next_run else None,
+            'next_run_local': (next_run.astimezone().isoformat() if next_run else None),
+            'trigger':      str(job.trigger),
+        })
+
+    return jsonify({
+        'running':  _scheduler.running,
+        'timezone': SCHEDULER_TIMEZONE,
+        'jobs':     jobs,
+        'last_run': _last_run,
+    }), 200
+
 @app.route("/api/estates/public", methods=["GET"])
+@token_required
 def public_estates():
-    """Unauthenticated estate list (id + name) for the signup estate selector."""
+    """Authenticated estate list (id + name) for the admin user-creation form."""
     from auth import get_db_connection
     conn = get_db_connection()
     if not conn:
@@ -71,42 +103,45 @@ def public_estates():
         conn.close()
 
 # Auth routes
-@app.route("/api/auth/signup", methods=["POST"])
-@rate_limit('/api/auth/signup', max_attempts=5, window_seconds=900)
-def signup():
-    """Register new user."""
+@app.route("/api/auth/users", methods=["GET"])
+@token_required
+@admin_required
+def list_users():
+    """Admin only: list all system users."""
+    result, status = get_all_users()
+    return jsonify(result), status
+
+
+@app.route("/api/auth/users", methods=["POST"])
+@token_required
+@admin_required
+def create_user():
+    """Admin only: create a new system user (admin, estate_manager, manager)."""
     data = request.get_json()
-    
     if not data:
         return jsonify({'error': 'No data provided'}), 400
-    
-    email = data.get('email', '').strip()
-    password = data.get('password', '')
+
+    email     = data.get('email', '').strip()
+    password  = data.get('password', '')
     full_name = data.get('full_name', '').strip()
-    
-    # Validation
+    role      = data.get('role', 'manager')
+    estate_id = data.get('estate_id') or None
+
     if not email or not password or not full_name:
         return jsonify({'error': 'Email, password, and full name are required'}), 400
-    
     if '@' not in email:
         return jsonify({'error': 'Invalid email format'}), 400
-    
-    # Validate password strength
+
     is_strong, message = validate_password_strength(password)
     if not is_strong:
         return jsonify({'error': message}), 400
 
-    # Role selection (testing convenience — lock this down later).
-    role = data.get('role', 'manager')
-    if role not in ALLOWED_SIGNUP_ROLES:
+    if role not in ALLOWED_SYSTEM_ROLES:
         return jsonify({'error': 'Invalid role'}), 400
-
-    # A manager is scoped to one estate, so they must be assigned one.
-    estate_id = data.get('estate_id')
     if role == 'manager' and not estate_id:
         return jsonify({'error': 'estate_id is required for the manager role'}), 400
 
-    result, status = signup_user(email, password, full_name, role=role, estate_id=estate_id)
+    result, status = create_user_by_admin(email, password, full_name, role=role, estate_id=estate_id)
     return jsonify(result), status
 
 @app.route("/api/auth/login", methods=["POST"])

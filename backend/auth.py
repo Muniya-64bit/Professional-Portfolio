@@ -305,6 +305,97 @@ def login_user(email, password):
     finally:
         conn.close()
 
+def is_admin():
+    """True if the current request's user is an admin."""
+    return (getattr(request, 'user', {}) or {}).get('role') == 'admin'
+
+
+def admin_required(f):
+    """Block all non-admin roles. Must be applied after token_required."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_admin():
+            return jsonify({'error': 'Admin access required'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def get_all_users():
+    """Return all system users (admin, estate_manager, manager)."""
+    conn = get_db_connection()
+    if not conn:
+        return {'error': 'Database connection failed'}, 500
+    try:
+        with conn.cursor() as cur:
+            cur.execute('''
+                SELECT u.id, u.email, u.full_name, u.role, u.estate_id, e.name AS estate_name, u.created_at
+                FROM "user" u
+                LEFT JOIN estate e ON e.id = u.estate_id
+                ORDER BY u.created_at DESC
+            ''')
+            rows = cur.fetchall()
+        return {
+            'users': [
+                {
+                    'id': str(r[0]),
+                    'email': r[1],
+                    'full_name': r[2],
+                    'role': r[3],
+                    'estate_id': str(r[4]) if r[4] else None,
+                    'estate_name': r[5],
+                    'created_at': r[6].isoformat() if r[6] else None,
+                }
+                for r in rows
+            ]
+        }, 200
+    except Exception as e:
+        logger.error('get_all_users error: %s', e, exc_info=True)
+        return {'error': 'Failed to retrieve users'}, 500
+    finally:
+        conn.close()
+
+
+def create_user_by_admin(email, password, full_name, role, estate_id=None):
+    """Create a system user (called by admin). Does not issue a token."""
+    conn = get_db_connection()
+    if not conn:
+        return {'error': 'Database connection failed'}, 500
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT id FROM "user" WHERE email = %s', (email,))
+            if cur.fetchone():
+                return {'error': 'Email already registered'}, 400
+            hashed = hash_password(password)
+            cur.execute('''
+                INSERT INTO "user" (email, password_hash, full_name, name, role, estate_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, email, full_name, role, estate_id
+            ''', (email, hashed, full_name, full_name, role, estate_id,
+                  datetime.utcnow(), datetime.utcnow()))
+            user = cur.fetchone()
+            conn.commit()
+            if user:
+                uid, uemail, uname, urole, uestate = user
+                logger.info('Admin created user: %s (%s)', uemail, urole)
+                return {
+                    'message': 'User created successfully',
+                    'user': {
+                        'id': str(uid),
+                        'email': uemail,
+                        'full_name': uname,
+                        'role': urole,
+                        'estate_id': str(uestate) if uestate else None,
+                    }
+                }, 201
+    except Exception as e:
+        conn.rollback()
+        logger.error('create_user_by_admin error: %s', e, exc_info=True)
+        return {'error': 'Failed to create user'}, 500
+    finally:
+        conn.close()
+    return {'error': 'Failed to create user'}, 500
+
+
 def get_user_profile(user_id):
     """Get user profile by ID."""
     conn = get_db_connection()

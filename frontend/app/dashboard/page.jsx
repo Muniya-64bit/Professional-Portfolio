@@ -31,6 +31,12 @@ const labourData = [
   { block: 'D3', estate: 'Ratnapura',     workers: 6,  target: 240, actual: 231, efficiency: 96.3 },
 ];
 
+/* ── Current period constants ─────────────────────────────────────────── */
+const _now = new Date();
+const CURRENT_YEAR         = _now.getFullYear();
+const CURRENT_MONTH        = _now.getMonth() + 1;
+const CURRENT_PERIOD_LABEL = _now.toLocaleString('default', { month: 'long', year: 'numeric' });
+
 /* ── Helper Components ────────────────────────────────────────────────── */
 function Sparkline({ data, height = 28 }) {
   const max = Math.max(...data.map(Math.abs));
@@ -92,16 +98,29 @@ function StatusBadge({ status }) {
 /* ── Tab: Overview ────────────────────────────────────────────────────── */
 function OverviewTab() {
   const { token } = useAuth();
-  const totalProd = labourData.reduce((s, r) => s + r.actual, 0);
-  const avgCost = Math.round(estates.reduce((s, e) => s + e.costPerKg, 0) / estates.length);
-  const activeWorkers = labourData.reduce((s, r) => s + r.workers, 0);
-  const avgWater = 'N/A';
+  const [summary, setSummary]     = useState(null);
+  const [rankings, setRankings]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState('');
   const [fertAlerts, setFertAlerts] = useState([]);
 
   useEffect(() => {
     if (!token) return;
+    setLoading(true); setError('');
+    Promise.all([
+      apiService.getROISummary(token, { year: CURRENT_YEAR, month: CURRENT_MONTH }),
+      apiService.getROIRankings(token, { year: CURRENT_YEAR, month: CURRENT_MONTH }),
+    ]).then(([s, r]) => {
+      setSummary(s);
+      setRankings(Array.isArray(r) ? r : (r?.rankings ?? []));
+    }).catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+
     apiService.getFertilizerAlerts(token).catch(() => []).then(data => setFertAlerts(Array.isArray(data) ? data : []));
   }, [token]);
+
+  const flagged  = rankings.filter(e => e.is_flagged).length;
+  const avgCost  = summary?.avg_cost_per_kg ?? null;
 
   const fertOverdue = fertAlerts.filter(a => a.status === 'overdue');
   const fertDue = fertAlerts.filter(a => a.status === 'due');
@@ -111,12 +130,28 @@ function OverviewTab() {
 
   return (
     <>
+      {error && (
+        <div className="alert alert-warning" style={{ marginBottom: 'var(--space-4)' }}>
+          <span>⚠️</span><span>{error}</span>
+        </div>
+      )}
+
       {/* KPI Cards */}
       <div className="kpi-grid">
-        <KpiCard icon="🌿" iconBg="kpi-icon-green"  label="Total Production (Jun)" value={totalProd.toLocaleString()} unit="kg" delta={-8.3} deltaLabel="vs last month" />
-        <KpiCard icon="💧" iconBg="kpi-icon-teal"   label="Avg Water Intensity"    value={avgWater}   unit="L/kg" delta={-2.1} deltaLabel="vs target 4.5 L/kg" />
-        <KpiCard icon="👥" iconBg="kpi-icon-blue"   label="Active Workers"         value={activeWorkers} unit="" delta={-0} deltaLabel="+5 vs last week" />
-        <KpiCard icon="💰" iconBg="kpi-icon-amber"  label="Avg Cost / kg"          value={`Rs. ${avgCost}`} unit="" delta={+2.5} deltaLabel="vs last quarter" />
+        <KpiCard icon="📊" iconBg="kpi-icon-green"
+          label={`Estates Tracked (${CURRENT_PERIOD_LABEL})`}
+          value={loading ? '…' : (summary?.total_estates ?? '—')} unit="" />
+        <KpiCard icon="💧" iconBg="kpi-icon-teal"
+          label="Water Efficiency"
+          value="See tab" unit="" />
+        <KpiCard icon="🚨" iconBg="kpi-icon-amber"
+          label="Flagged Estates"
+          value={loading ? '…' : flagged} unit=""
+          deltaLabel={flagged > 0 ? 'High cost per kg — review ROI tab' : 'All estates within range'} />
+        <KpiCard icon="💰" iconBg="kpi-icon-amber"
+          label="Avg Cost / kg"
+          value={loading ? '…' : (avgCost ? `Rs. ${avgCost.toFixed(2)}` : '—')} unit=""
+          deltaLabel={`Best: Rs. ${summary?.best_cost_per_kg?.toFixed(2) ?? '—'}  ·  Worst: Rs. ${summary?.worst_cost_per_kg?.toFixed(2) ?? '—'}`} />
       </div>
 
       {/* Two column layout */}
@@ -129,33 +164,41 @@ function OverviewTab() {
               <div className="section-card-title-icon">📊</div>
               Estate Rankings
             </div>
-            <span className="badge badge-neutral">by Cost/kg</span>
+            <span className="badge badge-neutral">by Cost/kg — {CURRENT_PERIOD_LABEL}</span>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Estate</th>
-                <th>Cost/kg</th>
-                <th>Trend</th>
-              </tr>
-            </thead>
-            <tbody>
-              {estates.map(e => (
-                <tr key={e.id}>
-                  <td>
-                    <div className={`rank-badge rank-${e.rank}`}>{e.rank}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: '0.9rem' }}>{e.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{e.location}</div>
-                  </td>
-                  <td style={{ fontWeight: 700 }}>Rs. {e.costPerKg}</td>
-                  <td><Sparkline data={e.trend} height={24} /></td>
+          {loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>Loading…</div>
+          ) : rankings.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+              No ROI data for this period. Enter cost data in the ROI Calculator tab.
+            </div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Estate</th>
+                  <th>Region</th>
+                  <th>Cost/kg</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rankings.map((e, i) => (
+                  <tr key={e.estate_name}>
+                    <td><div className={`rank-badge rank-${i + 1}`}>{i + 1}</div></td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: '0.9rem' }}>{e.estate_name}</div>
+                    </td>
+                    <td style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{e.region || '—'}</td>
+                    <td style={{ fontWeight: 700 }}>
+                      {e.cost_per_kg ? `Rs. ${Number(e.cost_per_kg).toFixed(2)}` : '—'}
+                      {e.is_flagged && <span className="badge badge-danger" style={{ marginLeft: 6, fontSize: '0.65rem' }}>Flagged</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Water efficiency quick view */}
@@ -163,22 +206,23 @@ function OverviewTab() {
           <div className="section-card-header">
             <div className="section-card-title">
               <div className="section-card-title-icon">💧</div>
-              Water Efficiency (2026)
+              Water Efficiency
             </div>
-            <span className="badge badge-success">On Track</span>
           </div>
           <div className="section-card-body">
-          <p style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>See the Water Efficiency tab for full details.</p>
+            <p style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>
+              See the <strong>Water Efficiency</strong> tab for monthly intensity tracking and targets.
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Fertilizer alerts */}
+      {/* Fertilizer quick view */}
       <div className="section-card" style={{ marginTop: 'var(--space-6)' }}>
         <div className="section-card-header">
           <div className="section-card-title">
             <div className="section-card-title-icon">🌱</div>
-            Fertilizer Alerts
+            Fertilizer Rotation
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {fertOverdue.length > 0 && <span className="badge badge-danger">{fertOverdue.length} Overdue</span>}
@@ -865,16 +909,17 @@ function WaterTab() {
   const { token } = useAuth();
   const [waterData, setWaterData] = useState([]);
   const [target, setTarget]       = useState(4.5);
+  const [targetPct, setTargetPct] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editRow, setEditRow] = useState(null); //
-  const [deleteRow, setDeleteRow] = useState(null); //
+  const [editRow, setEditRow] = useState(null);
+  const [deleteRow, setDeleteRow] = useState(null);
 
   useEffect(() => {
     async function load() {
       try {
         const [usage, baseline] = await Promise.all([
-          apiService.getWaterUsage(token, 2026),
+          apiService.getWaterUsage(token, CURRENT_YEAR),
           apiService.getWaterBaseline(token)
         ]);
 
@@ -882,6 +927,7 @@ function WaterTab() {
           ? parseFloat((baseline[0].baseline_intensity * (1 - baseline[0].annual_target_pct / 100)).toFixed(3))
           : 4.5;
         setTarget(t);
+        if (baseline.length > 0) setTargetPct(baseline[0].annual_target_pct);
 
         const formatted = usage.map(w => ({
           month:     w.month,
@@ -913,10 +959,10 @@ function WaterTab() {
   return (
     <>
       <div className="kpi-grid">
-        <KpiCard icon="💧" iconBg="kpi-icon-teal"  label="Latest Intensity" value={latest?.intensity ?? '—'} unit="L/kg" delta={-0.9} deltaLabel={`vs target ${target} L/kg`} />
+        <KpiCard icon="💧" iconBg="kpi-icon-teal"  label="Latest Intensity" value={latest?.intensity ?? '—'} unit="L/kg" deltaLabel={`target ${target} L/kg`} />
         <KpiCard icon="✅" iconBg="kpi-icon-green"  label="Months On Track" value={onTrack} unit="" />
         <KpiCard icon="⚠️" iconBg="kpi-icon-amber"  label="Months At Risk"  value={atRisk}  unit="" />
-        <KpiCard icon="🎯" iconBg="kpi-icon-blue"   label="Annual Goal"     value="-2%"    unit="" deltaLabel="reduction vs last year" />
+        <KpiCard icon="🎯" iconBg="kpi-icon-blue"   label="Annual Goal"     value={targetPct != null ? `-${targetPct}%` : '—'} unit="" deltaLabel="reduction vs last year" />
       </div>
 
       {/* ── Charts ── */}
@@ -1066,7 +1112,7 @@ function WaterTab() {
         <div className="table-header-bar">
           <div>
             <div className="table-title">Monthly Water Intensity</div>
-            <div className="table-subtitle">Factory water use per kg tea produced · 2026</div>
+            <div className="table-subtitle">Factory water use per kg tea produced · {CURRENT_YEAR}</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span className="badge badge-success">{onTrack}/{waterData.length} On Track</span>
@@ -1161,18 +1207,6 @@ function WaterTab() {
         </div>
       )}
 
-      {/* ── Log Water Data Modal ── */}
-      {showModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Log Water Data</div>
-
-            <WaterLogForm token={token} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); setLoading(true); apiService.getWaterUsage(token, 2026).then(usage => { const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));  setWaterData(formatted); }).finally(() => setLoading(false)); }} />
-          </div>
-        </div>
-      )}
-
-
       {/* ── Edit Modal ── */}
       {editRow && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
@@ -1185,7 +1219,7 @@ function WaterTab() {
               onSaved={() => {
                 setEditRow(null);
                 setLoading(true);
-                apiService.getWaterUsage(token, 2026).then(usage => {
+                apiService.getWaterUsage(token, CURRENT_YEAR).then(usage => {
                   const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));
                   setWaterData(formatted);
                 }).finally(() => setLoading(false));
@@ -1211,7 +1245,7 @@ function WaterTab() {
                     await apiService.deleteWaterUsage(token, deleteRow.id);
                     setDeleteRow(null);
                     setLoading(true);
-                    const usage = await apiService.getWaterUsage(token, 2026);
+                    const usage = await apiService.getWaterUsage(token, CURRENT_YEAR);
                     setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' })));
                   } catch(e) { console.error(e); }
                   finally { setLoading(false); }
@@ -1224,7 +1258,6 @@ function WaterTab() {
           </div>
         </div>
       )}
-
     </>
   );
 }
@@ -2917,7 +2950,7 @@ function LabourTab() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
                   {[
                     ['gender',          'Gender',     [['M','Male'],['F','Female'],['O','Other']]],
-                    ['skill_type',      'Skill',      [['plucker','Plucker'],['supervisor','Supervisor'],['general','General'],['driver','Driver']]],
+                    ['skill_type',      'Skill',      [['plucker','Picker'],['supervisor','Supervisor'],['driver','Driver']]],
                     ['employment_type', 'Employment', [['permanent','Permanent'],['casual','Casual'],['seasonal','Seasonal']]],
                     ['group_id',        'Group',      [['','— None —'], ...groups.map(g => [g.id, g.group_name])]],
                   ].map(([field, label, opts]) => (
@@ -3318,8 +3351,8 @@ function YieldPredictionTab() {
   const { token } = useAuth();
   const [estates, setEstates] = useState([]);
   const [estateId, setEstateId] = useState('');
-  const [year, setYear] = useState(2026);
-  const [month, setMonth] = useState(6);
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [month, setMonth] = useState(CURRENT_MONTH);
   const [predictions, setPredictions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -4652,8 +4685,388 @@ function FertilizerMgmtTab() {
   );
 }
 
+/* ── Tab: User Management (admin only) ───────────────────────────────── */
+function UserManagementTab() {
+  const { token } = useAuth();
+  const [users, setUsers]       = useState([]);
+  const [estates, setEstates]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState('');
+
+  // Scheduler status
+  const [schedStatus, setSchedStatus]     = useState(null);
+  const [schedLoading, setSchedLoading]   = useState(false);
+  const [schedError, setSchedError]       = useState('');
+
+  // Modal state
+  const [modal, setModal]       = useState(false);
+  const [form, setForm]         = useState({ full_name: '', email: '', password: '', role: 'manager', estate_id: '' });
+  const [saving, setSaving]     = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const ROLE_LABELS = { admin: 'Admin', estate_manager: 'Estate Manager', manager: 'Manager' };
+
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      const [usersData, estatesData] = await Promise.all([
+        apiService.getSystemUsers(token),
+        apiService.getPublicEstates(token),
+      ]);
+      setUsers(usersData.users || []);
+      setEstates(estatesData);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSchedStatus = async () => {
+    setSchedLoading(true); setSchedError('');
+    try {
+      const data = await apiService.getSchedulerStatus(token);
+      setSchedStatus(data);
+    } catch (e) {
+      setSchedError(e.message);
+    } finally {
+      setSchedLoading(false);
+    }
+  };
+
+  useEffect(() => { if (token) { load(); loadSchedStatus(); } }, [token]);
+
+  const openModal = () => {
+    setForm({ full_name: '', email: '', password: '', role: 'manager', estate_id: '' });
+    setFormError('');
+    setModal(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.full_name || !form.email || !form.password) {
+      setFormError('Full name, email and password are required.');
+      return;
+    }
+    if (form.role === 'manager' && !form.estate_id) {
+      setFormError('Please select an estate for the Manager role.');
+      return;
+    }
+    setSaving(true); setFormError('');
+    try {
+      await apiService.createSystemUser(token, {
+        full_name: form.full_name,
+        email: form.email,
+        password: form.password,
+        role: form.role,
+        estate_id: form.role === 'manager' ? form.estate_id : null,
+      });
+      setModal(false);
+      await load();
+    } catch (e) {
+      setFormError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const roleBadgeClass = (role) => {
+    if (role === 'admin') return 'badge-danger';
+    if (role === 'estate_manager') return 'badge-warning';
+    return 'badge-neutral';
+  };
+
+  return (
+    <div>
+      {error && (
+        <div className="alert alert-warning" style={{ marginBottom: 'var(--space-5)' }}>
+          <span>⚠️</span><span>{error}</span>
+        </div>
+      )}
+
+      <div className="table-wrap">
+        <div className="table-header-bar">
+          <div>
+            <div className="table-title">System Accounts</div>
+            <div className="table-subtitle">{users.length} users with system access</div>
+          </div>
+          <button
+            onClick={openModal}
+            style={{
+              padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              background: 'var(--color-primary)', color: '#fff', fontWeight: 600, fontSize: '0.8125rem',
+            }}
+          >
+            + Add User
+          </button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading users…</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Estate</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 32 }}>No users found.</td></tr>
+              ) : users.map(u => (
+                <tr key={u.id}>
+                  <td style={{ fontWeight: 600 }}>{u.full_name}</td>
+                  <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>{u.email}</td>
+                  <td>
+                    <span className={`badge ${roleBadgeClass(u.role)}`}>{ROLE_LABELS[u.role] || u.role}</span>
+                  </td>
+                  <td style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>{u.estate_name || '—'}</td>
+                  <td style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+                    {u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ── Scheduler Status Card ── */}
+      <div style={{ marginTop: 'var(--space-6)' }}>
+        <div className="table-wrap" style={{ padding: '20px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <div className="table-title">Monthly Labour Scheduler</div>
+              <div className="table-subtitle">Runs automatically on the 1st of each month at 09:50 (Asia/Colombo)</div>
+            </div>
+            <button
+              onClick={loadSchedStatus}
+              disabled={schedLoading}
+              style={{
+                padding: '6px 14px', borderRadius: 8, border: '1px solid var(--color-border)',
+                background: 'var(--color-surface-2)', color: 'var(--color-text)', cursor: 'pointer',
+                fontSize: '0.8125rem', fontWeight: 600, opacity: schedLoading ? 0.6 : 1,
+              }}
+            >
+              {schedLoading ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {schedError && (
+            <div className="alert alert-warning" style={{ marginBottom: 12 }}>
+              <span>⚠️</span><span>{schedError}</span>
+            </div>
+          )}
+
+          {schedStatus ? (() => {
+            const job     = schedStatus.jobs?.[0];
+            const lastRun = schedStatus.last_run || {};
+            const statusColor = {
+              ok:      'var(--color-success)',
+              skipped: 'var(--color-warning)',
+              error:   'var(--color-danger)',
+            };
+            const statusIcon = { ok: '✅', skipped: '⏭️', error: '❌' };
+
+            const fmtLocal = (iso) => {
+              if (!iso) return '—';
+              try { return new Date(iso).toLocaleString(); } catch { return iso; }
+            };
+
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                {/* Running state */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: schedStatus.running ? 'var(--color-success)' : 'var(--color-danger)',
+                      display: 'inline-block', flexShrink: 0,
+                    }} />
+                    <span style={{ fontWeight: 700, fontSize: '1rem' }}>
+                      {schedStatus.running ? 'Running' : 'Stopped'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    Timezone: {schedStatus.timezone}
+                  </div>
+                </div>
+
+                {/* Next fire */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Next Run</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.9375rem', lineHeight: 1.3 }}>
+                    {job ? fmtLocal(job.next_run_local) : '—'}
+                  </div>
+                  {job && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                      {job.trigger}
+                    </div>
+                  )}
+                </div>
+
+                {/* Last run */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last Run</div>
+                  {lastRun.fired_at ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{statusIcon[lastRun.status] || '❓'}</span>
+                        <span style={{ fontWeight: 700, color: statusColor[lastRun.status] || 'inherit' }}>
+                          {lastRun.status?.toUpperCase() || 'Unknown'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                        {fmtLocal(lastRun.fired_at)}
+                      </div>
+                      {lastRun.detail && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4, fontStyle: 'italic' }}>
+                          {lastRun.detail}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontWeight: 600, color: 'var(--color-text-muted)' }}>No runs recorded</div>
+                  )}
+                </div>
+              </div>
+            );
+          })() : (
+            !schedLoading && <div style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>No scheduler data available.</div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Add User Modal ── */}
+      {modal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: 'var(--color-surface)', borderRadius: 16, padding: 32,
+            width: '100%', maxWidth: 460, boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+            maxHeight: '90vh', overflowY: 'auto',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Add System User</div>
+
+            {formError && (
+              <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)',
+                            color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>
+                {formError}
+              </div>
+            )}
+
+            {[
+              ['full_name', 'Full Name', 'text', 'Kamal Perera'],
+              ['email',     'Email',     'email', 'user@plantation.com'],
+              ['password',  'Temporary Password', 'password', ''],
+            ].map(([field, label, type, placeholder]) => (
+              <div key={field} style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                                color: 'var(--color-text-muted)', marginBottom: 4 }}>{label}</label>
+                <input
+                  type={type}
+                  value={form[field]}
+                  onChange={e => setForm(p => ({ ...p, [field]: e.target.value }))}
+                  placeholder={placeholder}
+                  style={{
+                    width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+                    border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                    color: 'var(--color-text)', fontSize: '0.875rem',
+                  }}
+                />
+              </div>
+            ))}
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                              color: 'var(--color-text-muted)', marginBottom: 4 }}>Role</label>
+              <select
+                value={form.role}
+                onChange={e => setForm(p => ({ ...p, role: e.target.value, estate_id: '' }))}
+                style={{
+                  width: '100%', padding: '8px 12px', borderRadius: 8,
+                  border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                  color: 'var(--color-text)', fontSize: '0.875rem',
+                }}
+              >
+                <option value="admin">Admin — full access to all estates</option>
+                <option value="estate_manager">Estate Manager — full access to all estates</option>
+                <option value="manager">Manager — read-only, single estate</option>
+              </select>
+            </div>
+
+            {form.role === 'manager' && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600,
+                                color: 'var(--color-text-muted)', marginBottom: 4 }}>Estate</label>
+                <select
+                  value={form.estate_id}
+                  onChange={e => setForm(p => ({ ...p, estate_id: e.target.value }))}
+                  style={{
+                    width: '100%', padding: '8px 12px', borderRadius: 8,
+                    border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+                    color: 'var(--color-text)', fontSize: '0.875rem',
+                  }}
+                >
+                  <option value="">Select an estate…</option>
+                  {estates.map(es => (
+                    <option key={es.id} value={es.id}>{es.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div style={{ fontSize: '0.775rem', color: 'var(--color-text-muted)', marginBottom: 20,
+                          padding: '8px 12px', borderRadius: 6, background: 'var(--color-surface-2)',
+                          border: '1px solid var(--color-border)' }}>
+              Password must be at least 8 characters with uppercase, lowercase, number and special character. The user can change it after logging in.
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setModal(false)}
+                style={{
+                  padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)',
+                  background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                style={{
+                  padding: '8px 20px', borderRadius: 8, border: 'none',
+                  background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600,
+                  opacity: saving ? 0.7 : 1,
+                }}
+              >
+                {saving ? 'Creating…' : 'Create User'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const navItems = [
-  { id: 'overview',      icon: '🏠', label: 'Overview' },
   { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
   { id: 'roi',           icon: '📊', label: 'ROI Calculator' },
   { id: 'water',         icon: '💧', label: 'Water Efficiency' },
@@ -4664,10 +5077,11 @@ const navItems = [
   { id: 'labour',        icon: '👥', label: 'Labour Planner' },
   { id: 'predictions',   icon: '🔮', label: 'Yield Predictions' },
   { id: 'reports',       icon: '📄', label: 'Reports' },
+  { id: 'user-management', icon: '🔑', label: 'User Management', adminOnly: true },
 ];
 
 const tabTitles = {
-  overview:   { title: 'Overview',           sub: 'Estate-wide summary for June 2026' },
+  overview:   { title: 'Overview',           sub: `Estate-wide summary for ${CURRENT_PERIOD_LABEL}` },
   'estate-blocks': { title: 'Estates & Blocks',  sub: 'Manage all estates and their plantation blocks' },
   roi:        { title: 'ROI Calculator',      sub: 'Cost-per-kg analysis across all estates' },
   water:      { title: 'Water Efficiency',    sub: 'Monthly factory water intensity tracking' },
@@ -4678,6 +5092,7 @@ const tabTitles = {
   labour:     { title: 'Labour Planner',      sub: 'Monthly worker allocation & production targets' },
   predictions: { title: 'Yield Predictions',  sub: 'ML model forecasts for each block & month' },
   reports:    { title: 'Estate Reports',      sub: 'Generate detailed per-estate performance reports' },
+  'user-management': { title: 'User Management', sub: 'Admin only — create and manage system accounts' },
 };
 
 // Convert round number to month name (round 1 = Jan, round 2 = Feb, etc.)
@@ -4689,9 +5104,9 @@ const roundToMonth = (roundNumber) => {
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, loading, logout, token } = useAuth();
+  const { user, isAuthenticated, loading, logout, token, isAdmin } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('estate-blocks');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fertOverdueCount, setFertOverdueCount] = useState(0);
 
@@ -4741,7 +5156,7 @@ export default function DashboardPage() {
 
         <nav className="dash-nav">
           <div className="dash-nav-label">Main Menu</div>
-          {navItems.map(item => (
+          {navItems.filter(item => !item.adminOnly || isAdmin).map(item => (
             <button
               key={item.id}
               className={`dash-nav-item ${activeTab === item.id ? 'active' : ''}`}
@@ -4776,7 +5191,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="dash-topbar-right">
-            <span className="tag" style={{ fontSize: '0.75rem' }}>June 2026</span>
+            <span className="tag" style={{ fontSize: '0.75rem' }}>{CURRENT_PERIOD_LABEL}</span>
             <div className="dash-user-pill">
               <div className="dash-avatar">{userInitials}</div>
               <span>{user?.full_name || user?.email}</span>
@@ -4824,6 +5239,7 @@ export default function DashboardPage() {
           {activeTab === 'labour'      && <LabourTab />}
           {activeTab === 'predictions' && <YieldPredictionTab />}
           {activeTab === 'reports'     && <ReportTab />}
+          {activeTab === 'user-management' && isAdmin && <UserManagementTab />}
         </main>
       </div>
     </div>
