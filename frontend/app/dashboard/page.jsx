@@ -31,6 +31,12 @@ const labourData = [
   { block: 'D3', estate: 'Ratnapura',     workers: 6,  target: 240, actual: 231, efficiency: 96.3 },
 ];
 
+/* ── Current period constants ─────────────────────────────────────────── */
+const _now = new Date();
+const CURRENT_YEAR         = _now.getFullYear();
+const CURRENT_MONTH        = _now.getMonth() + 1;
+const CURRENT_PERIOD_LABEL = _now.toLocaleString('default', { month: 'long', year: 'numeric' });
+
 /* ── Helper Components ────────────────────────────────────────────────── */
 function Sparkline({ data, height = 28 }) {
   const max = Math.max(...data.map(Math.abs));
@@ -92,16 +98,29 @@ function StatusBadge({ status }) {
 /* ── Tab: Overview ────────────────────────────────────────────────────── */
 function OverviewTab() {
   const { token } = useAuth();
-  const totalProd = labourData.reduce((s, r) => s + r.actual, 0);
-  const avgCost = Math.round(estates.reduce((s, e) => s + e.costPerKg, 0) / estates.length);
-  const activeWorkers = labourData.reduce((s, r) => s + r.workers, 0);
-  const avgWater = 'N/A';
+  const [summary, setSummary]     = useState(null);
+  const [rankings, setRankings]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState('');
   const [fertAlerts, setFertAlerts] = useState([]);
 
   useEffect(() => {
     if (!token) return;
+    setLoading(true); setError('');
+    Promise.all([
+      apiService.getROISummary(token, { year: CURRENT_YEAR, month: CURRENT_MONTH }),
+      apiService.getROIRankings(token, { year: CURRENT_YEAR, month: CURRENT_MONTH }),
+    ]).then(([s, r]) => {
+      setSummary(s);
+      setRankings(Array.isArray(r) ? r : (r?.rankings ?? []));
+    }).catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+
     apiService.getFertilizerAlerts(token).catch(() => []).then(data => setFertAlerts(Array.isArray(data) ? data : []));
   }, [token]);
+
+  const flagged  = rankings.filter(e => e.is_flagged).length;
+  const avgCost  = summary?.avg_cost_per_kg ?? null;
 
   const fertOverdue = fertAlerts.filter(a => a.status === 'overdue');
   const fertDue = fertAlerts.filter(a => a.status === 'due');
@@ -5106,7 +5125,6 @@ function UserManagementTab() {
 }
 
 const navItems = [
-  { id: 'overview',      icon: '🏠', label: 'Overview' },
   { id: 'estate-blocks', icon: '🏗️', label: 'Estates & Blocks' },
   { id: 'roi',           icon: '📊', label: 'ROI Calculator' },
   { id: 'water',         icon: '💧', label: 'Water Efficiency' },
@@ -5117,6 +5135,7 @@ const navItems = [
   { id: 'labour',        icon: '👥', label: 'Labour Planner' },
   { id: 'predictions',   icon: '🔮', label: 'Yield Predictions' },
   { id: 'reports',       icon: '📄', label: 'Reports' },
+  { id: 'user-management', icon: '🔑', label: 'User Management', adminOnly: true },
 ];
 
 const tabTitles = {
@@ -5143,9 +5162,9 @@ const roundToMonth = (roundNumber) => {
 
 /* ── Main Dashboard ───────────────────────────────────────────────────── */
 export default function DashboardPage() {
-  const { user, isAuthenticated, loading, logout, token } = useAuth();
+  const { user, isAuthenticated, loading, logout, token, isAdmin } = useAuth();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('estate-blocks');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [fertOverdueCount, setFertOverdueCount] = useState(0);
 

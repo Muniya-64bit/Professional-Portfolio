@@ -35,19 +35,23 @@ _last_run = {
 
 
 def _run_monthly_job():
-    """Generate next month's labour plans and fertilizer schedules for all estates.
+    """Generate the current month's labour plans and fertilizer schedules for all estates.
+
+    Running in 2026-06 generates the 2026-06-01 plan (the month in progress),
+    not next month. Generation is idempotent, so re-running within the same
+    month is a no-op.
 
     Guard: skip silently if the target month is more than one month ahead of
     the latest plan already in the database.  This prevents the scheduler from
     running ahead of real operations when the database only holds seed data up
-    to a past month (e.g. Jan–May 2026 seeds while the app runs in June).
+    to a past month.
     """
     import psycopg, os
     from datetime import datetime
 
-    nxt = _next_month(date.today())
+    target = date.today().replace(day=1)
     fired_at = datetime.now().isoformat(timespec='seconds')
-    logger.info("Monthly labour job firing for %s", nxt.isoformat())
+    logger.info("Monthly labour job firing for %s", target.isoformat())
 
     try:
         conn = psycopg.connect(os.environ.get('DATABASE_URL'))
@@ -62,8 +66,8 @@ def _run_monthly_job():
             from datetime import date as _date
             latest_date = latest if isinstance(latest, _date) else latest.date()
             allowed = _next_month(latest_date)
-            if _date(nxt.year, nxt.month, 1) > allowed:
-                msg = (f"Skipped — target {nxt.isoformat()} is ahead of "
+            if _date(target.year, target.month, 1) > allowed:
+                msg = (f"Skipped — target {target.isoformat()} is ahead of "
                        f"latest plan {latest_date.isoformat()} "
                        f"(next allowed: {allowed.isoformat()})")
                 logger.info("Monthly labour job %s", msg)
@@ -73,11 +77,11 @@ def _run_monthly_job():
         logger.exception("Monthly labour job: guard query failed — proceeding anyway")
 
     try:
-        result, status = generate_monthly_plans(nxt.year, nxt.month)
+        result, status = generate_monthly_plans(target.year, target.month)
         plans_created = result.get('plans_created', 0)
         logger.info("Monthly labour job done (%s): %s plans created", status, plans_created)
         _last_run.update(fired_at=fired_at, status='ok',
-                         detail=f"{plans_created} plans created for {nxt.isoformat()}")
+                         detail=f"{plans_created} plans created for {target.isoformat()}")
     except Exception as exc:
         logger.exception("Monthly labour job failed")
         _last_run.update(fired_at=fired_at, status='error', detail=str(exc))
@@ -88,15 +92,15 @@ def _run_monthly_job():
         import os
         conn = psycopg.connect(os.environ['DATABASE_URL'])
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM estate WHERE is_active = TRUE")
+            cur.execute("SELECT id FROM estate")
             estate_ids = [row[0] for row in cur.fetchall()]
         conn.close()
         for eid in estate_ids:
-            payload, http_status = _run_generate_schedule(eid, nxt, user_id=None)
+            payload, http_status = _run_generate_schedule(eid, target, user_id=None)
             if http_status == 201:
                 logger.info("Fertilizer schedule generated for estate %s: %s", eid, payload)
             elif http_status == 409:
-                logger.info("Fertilizer schedule already exists for estate %s %s — skipping", eid, nxt)
+                logger.info("Fertilizer schedule already exists for estate %s %s — skipping", eid, target)
             else:
                 logger.warning("Fertilizer schedule generation failed for estate %s: %s", eid, payload)
     except Exception:
@@ -123,7 +127,7 @@ def start_scheduler():
     # 09:50 on the 1st of every month, in SCHEDULER_TIMEZONE.
     _scheduler.add_job(
         _run_monthly_job,
-        trigger='cron', day=9, hour=10, minute=0,
+        trigger='cron', day=9, hour=11, minute=15,
         id='monthly_labour_plan', replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
         coalesce=True,            # collapse multiple missed fires into one run
