@@ -708,6 +708,52 @@ function ROITab() {
 }
 
 
+function WaterEditForm({ token, row, onClose, onSaved }) {
+  const [waterM3, setWaterM3] = useState('');
+  const [yieldKg, setYieldKg] = useState('');
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState('');
+
+  const inputStyle = {
+    width: '100%', padding: '8px 12px', borderRadius: 8, boxSizing: 'border-box',
+    border: '1px solid var(--color-border)', background: 'var(--color-surface-2)',
+    color: 'var(--color-text)', fontSize: '0.875rem', marginBottom: 14
+  };
+
+  const handleSave = async () => {
+    if (!waterM3 && !yieldKg) { setError('Enter at least one value to update.'); return; }
+    setSaving(true); setError('');
+    try {
+      await apiService.updateWaterUsage(token, row.id, {
+        water_m3: waterM3 ? parseFloat(waterM3) : undefined,
+        yield_kg: yieldKg ? parseFloat(yieldKg) : undefined,
+      });
+      onSaved();
+    } catch(e) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      {error && <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(220,38,38,0.1)', color: 'var(--color-danger)', marginBottom: 16, fontSize: '0.875rem' }}>{error}</div>}
+      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: 16 }}>Current intensity: <strong>{row.intensity} L/kg</strong>. Leave a field blank to keep the existing value.</p>
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>New Water Used (m³)</label>
+      <input type="number" placeholder="Leave blank to keep current" value={waterM3} onChange={e => setWaterM3(e.target.value)} style={inputStyle} />
+
+      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 4 }}>New Yield (kg)</label>
+      <input type="number" placeholder="Leave blank to keep current" value={yieldKg} onChange={e => setYieldKg(e.target.value)} style={inputStyle} />
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
+        <button onClick={onClose} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+        <button onClick={handleSave} disabled={saving} style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-primary)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Saving…' : 'Save Changes'}
+        </button>
+      </div>
+    </>
+  );
+}
+
 function WaterLogForm({ token, onClose, onSaved }) {
   const [estates, setEstates] = useState([]);
   const [factoryId, setFactoryId] = useState('');
@@ -797,6 +843,8 @@ function WaterTab() {
   const [target, setTarget]       = useState(4.5);
   const [loading, setLoading]     = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [editRow, setEditRow] = useState(null); //
+  const [deleteRow, setDeleteRow] = useState(null); //
 
   useEffect(() => {
     async function load() {
@@ -814,6 +862,7 @@ function WaterTab() {
         const formatted = usage.map(w => ({
           month:     w.month,
           estate:    w.estate,
+          id:        w.id, //
           intensity: w.intensity_l_per_kg,
           target:    t,
           status:    w.track_status
@@ -1054,6 +1103,22 @@ function WaterTab() {
                         </div>
                       </td>
                       <td><span className={`badge ${ok ? 'badge-success' : 'badge-warning'}`}>{ok ? 'On Track' : 'At Risk'}</span></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={() => setEditRow(w)}
+                            style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setDeleteRow(w)}
+                            style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(220,38,38,0.3)', background: 'transparent', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -1077,6 +1142,59 @@ function WaterTab() {
             <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Log Water Data</div>
 
             <WaterLogForm token={token} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); setLoading(true); apiService.getWaterUsage(token, 2026).then(usage => { const formatted = usage.map(w => ({ month: w.month, estate: w.estate, intensity: w.intensity_l_per_kg, target, status: w.track_status })); setWaterData(formatted); }).finally(() => setLoading(false)); }} />
+          </div>
+        </div>
+      )}
+
+
+      {/* ── Edit Modal ── */}
+      {editRow && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 20 }}>Edit — {editRow.estate} {editRow.month}</div>
+            <WaterEditForm
+              token={token}
+              row={editRow}
+              onClose={() => setEditRow(null)}
+              onSaved={() => {
+                setEditRow(null);
+                setLoading(true);
+                apiService.getWaterUsage(token, 2026).then(usage => {
+                  const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, intensity: w.intensity_l_per_kg, target, status: w.track_status }));
+                  setWaterData(formatted);
+                }).finally(() => setLoading(false));
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation ── */}
+      {deleteRow && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16, padding: 32, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+            <div style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: 8 }}>Delete Entry</div>
+            <p style={{ color: 'var(--color-text-muted)', marginBottom: 20 }}>
+              Are you sure you want to delete <strong>{deleteRow.estate} — {deleteRow.month}</strong>?
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteRow(null)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', fontWeight: 600 }}>Cancel</button>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiService.deleteWaterUsage(token, deleteRow.id);
+                    setDeleteRow(null);
+                    setLoading(true);
+                    const usage = await apiService.getWaterUsage(token, 2026);
+                    setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, intensity: w.intensity_l_per_kg, target, status: w.track_status })));
+                  } catch(e) { console.error(e); }
+                  finally { setLoading(false); }
+                }}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: 'var(--color-danger)', color: '#fff', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Yes, Delete
+              </button>
+            </div>
           </div>
         </div>
       )}

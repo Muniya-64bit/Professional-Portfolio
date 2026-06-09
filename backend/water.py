@@ -206,3 +206,21 @@ def update_water_usage(usage_id):
     conn.close()
 
     return jsonify({'message': 'Updated successfully'}), 200
+
+
+@water_bp.route('/api/water/usage/<usage_id>', methods=['DELETE'])
+@token_required
+def delete_water_usage(usage_id):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM water_usage WHERE id = %s",
+        (usage_id,)
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({'message': 'Deleted successfully'}), 200
