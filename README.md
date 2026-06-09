@@ -12,9 +12,10 @@ Tracks labour rotation, fertilizer schedules, water efficiency, and ROI across 4
 | Frontend | Next.js 14, React 18, plain CSS |
 | Backend | Python 3, Flask, Flask-CORS, PyJWT, bcrypt |
 | Database | PostgreSQL 16 (Docker) |
+| ML Service | FastAPI, XGBoost, scikit-learn |
 | Auth | JWT (Bearer token) |
 
-**Ports:** `3000` (frontend) · `5000` (backend) · `5432` (database)
+**Ports:** `3000` (frontend) · `5000` (backend) · `5432` (database) · `8000` (ML service)
 
 ---
 
@@ -37,28 +38,52 @@ Professional-Portfolio/
 ├── .env                        # Root env (Docker credentials)
 │
 ├── backend/
-│   ├── app.py                  # Flask entry point + auth routes
-│   ├── auth.py                 # JWT auth helpers
-│   ├── labour.py               # Labour planner API blueprint
+│   ├── app.py                  # Flask entry point — registers all blueprints
+│   ├── auth.py                 # JWT issuance, bcrypt, rate limiting, token blacklist
+│   ├── labour.py               # Labour planner: workers, groups, rotation, assignments
+│   ├── water.py                # Water usage & intensity tracking
+│   ├── reports.py              # PDF generation (ReportLab + Matplotlib), audit log
+│   ├── predictions.py          # Proxy to ML service; fallback for manual yield entry
+│   ├── scheduler.py            # APScheduler — monthly plan auto-generation (prod only)
+│   ├── schemas.py              # Shared Marshmallow/validation schemas
+│   ├── labour_serializers.py   # Labour response serializers
+│   ├── labour_validators.py    # Labour request validators
 │   ├── migrate.py              # Migration runner CLI
+│   ├── wsgi.py                 # Gunicorn entry point
+│   ├── create_test_users.py    # Seed test user accounts
 │   ├── requirements.txt        # Python dependencies
-│   ├── .env                    # Backend env (DATABASE_URL, SECRET_KEY)
+│   ├── .env                    # Backend env (DATABASE_URL, SECRET_KEY, FASTAPI_URL)
 │   └── migrations/
-│       ├── 001_initial_schema.sql      # Tables, indexes, views
-│       ├── 002_sample_data.sql         # Estates, blocks, users, base data
-│       ├── 003_labour_planner_schema.sql  # Labour tables (employee, rotation, etc.)
-│       ├── 004_labour_sample_data.sql  # Kundasale labour data
-│       ├── 005_remaining_estates_sample_data.sql  # Ramboda, Hunasgiriya, Haputale
-│       └── QUERIES.sql                 # Reference queries for all modules
+│       ├── 001_initial_schema.sql               # Core tables, indexes, views, fertilizer seed data
+│       ├── 002_sample_data.sql                  # 4 estates, blocks, users, fertilizer/water/ROI data
+│       ├── 003_add_authentication.sql           # password_hash + full_name columns on user
+│       ├── 003_labour_planner_schema.sql        # Labour tables: employee, worker_group, rotation, etc.
+│       ├── 004_labour_sample_data.sql           # Kundasale: 90 employees, 6 groups, rotation, plan
+│       ├── 005_remaining_estates_sample_data.sql # Ramboda, Hunasgiriya, Haputale: full labour data
+│       ├── 006_ml_yield_prediction.sql          # ML tables: block_yield_record, estate_weather, yield_prediction
+│       ├── 007_water_remaining_estates.sql      # Water baseline data for Ramboda, Hunasgiriya, Haputale
+│       ├── 008_labour_monthly.sql               # Labour plans: weekly → monthly cadence
+│       ├── 009_add_manager_role.sql             # Read-only estate-scoped manager role
+│       ├── 010_sample_predictions.sql           # Sample ML yield predictions for all estates (2026)
+│       ├── 011_fertilizer_planner_schema.sql    # Fertilizer planner: NPK columns, rate_kg_per_ha, rotation tables
+│       ├── QUERIES.sql                          # Reference queries for all modules
+│       └── SCHEMA_OVERVIEW.sql                 # Annotated full schema reference
+│
+├── ml/
+│   ├── api.py                  # FastAPI service — /predict-batch endpoint (port 8000)
+│   ├── data_generator.py       # Fetch NASA POWER weather + generate training data
+│   ├── preprocess.py           # Encode/scale features
+│   ├── train_model.py          # Train XGBoost model → saves to ml/models/
+│   └── models/                 # Trained artifacts (yield_model.pkl, encoders.pkl)
 │
 └── frontend/
     ├── app/
     │   ├── page.jsx            # Landing page
-    │   ├── dashboard/page.jsx  # Main dashboard (all tabs)
+    │   ├── dashboard/page.jsx  # Main dashboard (all module tabs)
     │   ├── auth/               # Login / signup pages
-    │   ├── api/apiService.js   # All API calls
-    │   └── context/AuthContext.jsx  # JWT auth state
-    ├── .env.local              # Frontend env (API base URL)
+    │   ├── api/apiService.js   # Centralized API client — injects JWT, handles 401
+    │   └── context/AuthContext.jsx  # JWT state in localStorage, auto-refresh
+    ├── .env.local              # Frontend env (NEXT_PUBLIC_API_URL)
     └── package.json
 ```
 
@@ -119,13 +144,13 @@ python migrate.py migrate
 Expected output:
 
 ```
-📋 Found 5 pending migration(s):
+📋 Found 11 pending migration(s):
 
    - 001_initial_schema.sql
    - 002_sample_data.sql
+   - 003_add_authentication.sql
    - 003_labour_planner_schema.sql
-   - 004_labour_sample_data.sql
-   - 005_remaining_estates_sample_data.sql
+   - ...
 
 ▶️  Running: 001_initial_schema.sql
 ✅ Completed: 001_initial_schema.sql (205ms)
@@ -161,15 +186,14 @@ cd frontend
 
 # Install dependencies
 npm install
-
-# Copy environment file (only needed once)
-cp .env.local.example .env.local
 ```
 
-The `.env.local` is already configured:
+Create `frontend/.env.local` with:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_APP_NAME=KVPL System
+NEXT_PUBLIC_ENABLE_DEMO=true
 ```
 
 ### 7. Start the frontend
@@ -179,6 +203,18 @@ npm run dev
 ```
 
 Frontend runs at `http://localhost:3000`.
+
+### 8. (Optional) Start the ML service
+
+Required only for yield predictions. Open another terminal:
+
+```powershell
+cd ml
+pip install fastapi uvicorn xgboost scikit-learn pandas numpy
+python api.py
+```
+
+ML service runs at `http://localhost:8000`. If it's not running, users can enter yield estimates manually in the Labour Planner.
 
 ---
 
@@ -194,6 +230,8 @@ The sample data seeds estate records, blocks, and employees but **does not inclu
 > Example: `Admin@1234`
 
 Once signed in, you have access to all dashboard tabs including the Labour Planner.
+
+> Role hierarchy: `admin` > `estate_manager` > `manager` (estate-scoped, read-only).
 
 ---
 
@@ -298,11 +336,18 @@ Migrations run in filename order. Each is tracked in `schema_migrations` and onl
 
 | File | What it does |
 |---|---|
-| `001_initial_schema.sql` | All tables, indexes, views, fertilizer seed data |
-| `002_sample_data.sql` | 4 estates, blocks (Kundasale + Ramboda), system users, fertilizer/water/ROI data |
-| `003_labour_planner_schema.sql` | New labour tables: `employee`, `worker_group`, `rotation_cycle`, `block_assignment`, etc. Drops old `block_allocation` |
-| `004_labour_sample_data.sql` | Kundasale: 90 employees, 6 groups, 6-round rotation, current week plan |
-| `005_remaining_estates_sample_data.sql` | Ramboda / Hunasgiriya / Haputale: blocks, employees, groups, rotation, plans, 4 weeks of history |
+| `001_initial_schema.sql` | Core tables, indexes, views, fertilizer seed data |
+| `002_sample_data.sql` | 4 estates, blocks (Kundasale + Ramboda), users, fertilizer/water/ROI data |
+| `003_add_authentication.sql` | Adds `password_hash` and `full_name` columns to `user` |
+| `003_labour_planner_schema.sql` | Labour tables: `employee`, `worker_group`, `rotation_cycle`, `block_assignment`, etc. Drops old `block_allocation` |
+| `004_labour_sample_data.sql` | Kundasale: 90 employees, 6 groups, 6-round rotation, current month plan |
+| `005_remaining_estates_sample_data.sql` | Ramboda / Hunasgiriya / Haputale: blocks, employees, groups, rotation, plans, history |
+| `006_ml_yield_prediction.sql` | ML tables: adds `elevation_m`, `bush_age_yrs`, `zone` to `block`; creates `block_yield_record`, `estate_weather`, `yield_prediction` |
+| `007_water_remaining_estates.sql` | Water baseline & monthly usage data for the 3 remaining estates |
+| `008_labour_monthly.sql` | Migrates labour plans from weekly to monthly cadence (`week_start` → `period_start`) |
+| `009_add_manager_role.sql` | Widens the `role` CHECK constraint to allow the read-only `manager` role |
+| `010_sample_predictions.sql` | Sample ML yield predictions for all 4 estates across 2026 |
+| `011_fertilizer_planner_schema.sql` | Fertilizer planner: NPK columns on `fertilizer_type`, `rate_kg_per_ha` on `fertilizer_application`, new rotation tables |
 
 ### Migration commands
 
@@ -316,7 +361,7 @@ python migrate.py rollback         # DROP everything (dev reset, prompts YES)
 
 ```powershell
 python migrate.py rollback         # type YES
-python migrate.py migrate          # re-run all 5 files
+python migrate.py migrate          # re-run all 11 files
 ```
 
 ---
@@ -437,6 +482,10 @@ python app.py
 # Terminal 3 — Frontend
 cd frontend
 npm run dev
+
+# Terminal 4 — ML Service (optional, for yield predictions)
+cd ml
+python api.py
 
 # Browser
 http://localhost:3000
