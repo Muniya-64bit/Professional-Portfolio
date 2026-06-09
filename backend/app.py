@@ -16,6 +16,7 @@ from water import water_bp
 from reports import reports_bp
 from roi import roi_bp
 from scheduler import maybe_start_scheduler
+from predictions import predictions_bp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,7 @@ app.register_blueprint(labour_bp)
 app.register_blueprint(water_bp)
 app.register_blueprint(reports_bp)
 app.register_blueprint(roi_bp)
+app.register_blueprint(predictions_bp)
 
 # Start the monthly labour scheduler at import time so it runs under wsgi/gunicorn
 # too (not only `python app.py`). Gating inside ensures exactly one process owns
