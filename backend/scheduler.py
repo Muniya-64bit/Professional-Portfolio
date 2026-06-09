@@ -16,14 +16,21 @@ logger = logging.getLogger(__name__)
 
 _scheduler = None
 
-# Timezone the cron fires in. Pinned so "02:00 on the 1st" is deterministic
+# Timezone the cron fires in. Pinned so "09:50 on the 1st" is deterministic
 # regardless of the host's local timezone (dev box vs. production server).
 SCHEDULER_TIMEZONE = os.environ.get('SCHEDULER_TIMEZONE', 'Asia/Colombo')
 
 # How long after the scheduled instant APScheduler will still run a missed job.
 # For a once-a-month job we want it to run even if the process was down at
-# exactly 02:00 — anytime within 6 hours of the trigger still counts.
+# exactly 09:50 — anytime within 6 hours of the trigger still counts.
 MISFIRE_GRACE_SECONDS = 6 * 60 * 60
+
+# Track last run outcome so the status endpoint can report it.
+_last_run = {
+    'fired_at':  None,
+    'status':    None,   # 'ok' | 'skipped' | 'error'
+    'detail':    None,
+}
 
 
 def _run_monthly_job():
@@ -35,16 +42,16 @@ def _run_monthly_job():
     to a past month (e.g. Jan–May 2026 seeds while the app runs in June).
     """
     import psycopg, os
+    from datetime import datetime
 
     nxt = _next_month(date.today())
+    fired_at = datetime.now().isoformat(timespec='seconds')
     logger.info("Monthly labour job firing for %s", nxt.isoformat())
 
     try:
         conn = psycopg.connect(os.environ.get('DATABASE_URL'))
         cur  = conn.cursor()
-        cur.execute(
-            "SELECT MAX(period_start) FROM labour_plan"
-        )
+        cur.execute("SELECT MAX(period_start) FROM labour_plan")
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -52,25 +59,27 @@ def _run_monthly_job():
         latest = row[0] if row and row[0] else None
         if latest is not None:
             from datetime import date as _date
-            # Allow at most one month ahead of the latest seeded plan
             latest_date = latest if isinstance(latest, _date) else latest.date()
             allowed = _next_month(latest_date)
             if _date(nxt.year, nxt.month, 1) > allowed:
-                logger.info(
-                    "Monthly labour job skipped — target %s is ahead of "
-                    "latest plan %s (next allowed: %s)",
-                    nxt.isoformat(), latest_date.isoformat(), allowed.isoformat(),
-                )
+                msg = (f"Skipped — target {nxt.isoformat()} is ahead of "
+                       f"latest plan {latest_date.isoformat()} "
+                       f"(next allowed: {allowed.isoformat()})")
+                logger.info("Monthly labour job %s", msg)
+                _last_run.update(fired_at=fired_at, status='skipped', detail=msg)
                 return
     except Exception:
         logger.exception("Monthly labour job: guard query failed — proceeding anyway")
 
     try:
         result, status = generate_monthly_plans(nxt.year, nxt.month)
-        logger.info("Monthly labour job done (%s): %s plans created",
-                    status, result.get('plans_created'))
-    except Exception:
+        plans_created = result.get('plans_created', 0)
+        logger.info("Monthly labour job done (%s): %s plans created", status, plans_created)
+        _last_run.update(fired_at=fired_at, status='ok',
+                         detail=f"{plans_created} plans created for {nxt.isoformat()}")
+    except Exception as exc:
         logger.exception("Monthly labour job failed")
+        _last_run.update(fired_at=fired_at, status='error', detail=str(exc))
 
 
 def start_scheduler():
@@ -80,16 +89,16 @@ def start_scheduler():
         return _scheduler
 
     _scheduler = BackgroundScheduler(daemon=True, timezone=SCHEDULER_TIMEZONE)
-    # 02:30 on the 1st of every month, in SCHEDULER_TIMEZONE.
+    # 09:50 on the 1st of every month, in SCHEDULER_TIMEZONE.
     _scheduler.add_job(
         _run_monthly_job,
-        trigger='cron', day=1, hour=2, minute=30,
+        trigger='cron', day=9, hour=10, minute=0,
         id='monthly_labour_plan', replace_existing=True,
         misfire_grace_time=MISFIRE_GRACE_SECONDS,
         coalesce=True,            # collapse multiple missed fires into one run
     )
     _scheduler.start()
-    logger.info("Labour scheduler started (monthly_labour_plan @ day=1 02:30 %s)",
+    logger.info("Labour scheduler started (monthly_labour_plan @ day=9 10:00 %s) [TEST]",
                 SCHEDULER_TIMEZONE)
     return _scheduler
 

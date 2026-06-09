@@ -50,6 +50,36 @@ def home():
 def health():
     return jsonify({"status": "ok"})
 
+@app.route("/api/scheduler/status", methods=["GET"])
+@token_required
+def scheduler_status():
+    """Return the scheduler's running state, next fire time, and last run result."""
+    from scheduler import _scheduler, _last_run, SCHEDULER_TIMEZONE
+    if _scheduler is None or not _scheduler.running:
+        return jsonify({
+            'running': False,
+            'timezone': SCHEDULER_TIMEZONE,
+            'jobs': [],
+            'last_run': _last_run,
+        }), 200
+
+    jobs = []
+    for job in _scheduler.get_jobs():
+        next_run = job.next_run_time
+        jobs.append({
+            'id':           job.id,
+            'next_run_utc': next_run.isoformat() if next_run else None,
+            'next_run_local': (next_run.astimezone().isoformat() if next_run else None),
+            'trigger':      str(job.trigger),
+        })
+
+    return jsonify({
+        'running':  _scheduler.running,
+        'timezone': SCHEDULER_TIMEZONE,
+        'jobs':     jobs,
+        'last_run': _last_run,
+    }), 200
+
 @app.route("/api/estates/public", methods=["GET"])
 @token_required
 def public_estates():

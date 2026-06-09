@@ -54,6 +54,11 @@ export const apiService = {
     return this._auth(token, 'POST', '/auth/users', data);
   },
 
+  // Admin-only: check scheduler status
+  async getSchedulerStatus(token) {
+    return this._auth(token, 'GET', '/scheduler/status');
+  },
+
   async login(email, password) {
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {

@@ -833,10 +833,11 @@ function WaterTab() {
   const { token } = useAuth();
   const [waterData, setWaterData] = useState([]);
   const [target, setTarget]       = useState(4.5);
+  const [targetPct, setTargetPct] = useState(null);
   const [loading, setLoading]     = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [editRow, setEditRow] = useState(null); //
-  const [deleteRow, setDeleteRow] = useState(null); //
+  const [editRow, setEditRow] = useState(null);
+  const [deleteRow, setDeleteRow] = useState(null);
 
   useEffect(() => {
     async function load() {
@@ -886,149 +887,6 @@ function WaterTab() {
         <KpiCard icon="✅" iconBg="kpi-icon-green"  label="Months On Track" value={onTrack} unit="" />
         <KpiCard icon="⚠️" iconBg="kpi-icon-amber"  label="Months At Risk"  value={atRisk}  unit="" />
         <KpiCard icon="🎯" iconBg="kpi-icon-blue"   label="Annual Goal"     value={targetPct != null ? `-${targetPct}%` : '—'} unit="" deltaLabel="reduction vs last year" />
-      </div>
-
-      {/* ── Charts ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-6)', marginBottom: 'var(--space-6)' }}>
-
-        {/* Line Chart — intensity trend per estate */}
-        <div className="section-card">
-          <div className="section-card-header">
-            <div className="section-card-title">
-              <div className="section-card-title-icon">📈</div>
-              Intensity Trend by Estate
-            </div>
-          </div>
-          <div className="section-card-body">
-            <svg viewBox="0 0 400 200" width="100%" style={{ overflow: 'visible' }}>
-              {/* Grid lines */}
-              {[2, 3, 4, 5].map(v => {
-                const y = 180 - ((v - 2) / 3) * 160;
-                return (
-                  <g key={v}>
-                    <line x1="40" y1={y} x2="390" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" />
-                    <text x="35" y={y + 4} fontSize="10" fill="var(--color-text-muted)" textAnchor="end">{v}</text>
-                  </g>
-                );
-              })}
-              {/* Target line */}
-              {(() => {
-                const ty = 180 - ((target - 2) / 3) * 160;
-                return <line x1="40" y1={ty} x2="390" y2={ty} stroke="var(--color-danger)" strokeDasharray="6 3" strokeWidth="1.5" opacity="0.6" />;
-              })()}
-              {/* Lines per estate */}
-              {Object.entries(
-                waterData.reduce((g, w) => { if (!g[w.estate]) g[w.estate] = []; g[w.estate].push(w); return g; }, {})
-              ).map(([estate, rows], ei) => {
-                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
-                const color = colors[ei % colors.length];
-                const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                const points = rows.map(w => {
-                  const mx = months.indexOf(w.month);
-                  const x = 40 + (mx / 11) * 350;
-                  const y = 180 - ((w.intensity - 2) / 3) * 160;
-                  return `${x},${y}`;
-                }).join(' ');
-                return (
-                  <g key={estate}>
-                    <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    {rows.map(w => {
-                      const mx = months.indexOf(w.month);
-                      const x = 40 + (mx / 11) * 350;
-                      const y = 180 - ((w.intensity - 2) / 3) * 160;
-                      return <circle key={w.month} cx={x} cy={y} r="3" fill={color} />;
-                    })}
-                  </g>
-                );
-              })}
-              {/* Month labels */}
-              {['Jan','Feb','Mar','Apr','May'].map((m, i) => {
-                const x = 40 + (i / 11) * 350;
-                return <text key={m} x={x} y="196" fontSize="10" fill="var(--color-text-muted)" textAnchor="middle">{m}</text>;
-              })}
-            </svg>
-            {/* Legend */}
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-              {Object.keys(waterData.reduce((g, w) => { g[w.estate] = 1; return g; }, {})).map((estate, ei) => {
-                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
-                return (
-                  <div key={estate} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                    <div style={{ width: 12, height: 3, borderRadius: 2, background: colors[ei % colors.length] }} />
-                    {estate}
-                  </div>
-                );
-              })}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                <div style={{ width: 12, height: 2, borderRadius: 2, background: 'var(--color-danger)', opacity: 0.6 }} />
-                Target
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Bar Chart — compare estates per month */}
-        <div className="section-card">
-          <div className="section-card-header">
-            <div className="section-card-title">
-              <div className="section-card-title-icon">📊</div>
-              Estate Comparison by Month
-            </div>
-          </div>
-          <div className="section-card-body">
-            <svg viewBox="0 0 400 200" width="100%" style={{ overflow: 'visible' }}>
-              {/* Grid lines */}
-              {[2, 3, 4, 5].map(v => {
-                const y = 180 - ((v - 2) / 3) * 160;
-                return (
-                  <g key={v}>
-                    <line x1="40" y1={y} x2="390" y2={y} stroke="var(--color-border)" strokeDasharray="4" strokeWidth="1" />
-                    <text x="35" y={y + 4} fontSize="10" fill="var(--color-text-muted)" textAnchor="end">{v}</text>
-                  </g>
-                );
-              })}
-              {/* Bars grouped by month */}
-              {(() => {
-                const months = ['Jan','Feb','Mar','Apr','May'];
-                const estateNames = [...new Set(waterData.map(w => w.estate))];
-                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
-                const groupW = 60;
-                const barW = Math.min(10, (groupW - 4) / estateNames.length);
-                return months.map((month, mi) => {
-                  const gx = 50 + mi * groupW;
-                  return (
-                    <g key={month}>
-                      {estateNames.map((estate, ei) => {
-                        const row = waterData.find(w => w.estate === estate && w.month === month);
-                        if (!row) return null;
-                        const barH = ((row.intensity - 2) / 3) * 160;
-                        const x = gx + ei * (barW + 1);
-                        const y = 180 - barH;
-                        return (
-                          <rect key={estate} x={x} y={y} width={barW} height={barH}
-                            fill={colors[ei % colors.length]} opacity="0.8" rx="1"
-                          />
-                        );
-                      })}
-                      <text x={gx + (estateNames.length * (barW + 1)) / 2} y="196" fontSize="10" fill="var(--color-text-muted)" textAnchor="middle">{month}</text>
-                    </g>
-                  );
-                });
-              })()}
-            </svg>
-            {/* Legend */}
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-              {[...new Set(waterData.map(w => w.estate))].map((estate, ei) => {
-                const colors = ['#2563eb','#16a34a','#d97706','#9333ea'];
-                return (
-                  <div key={estate} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 2, background: colors[ei % colors.length] }} />
-                    {estate}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* ── Charts ── */}
@@ -1272,30 +1130,6 @@ function WaterTab() {
           <span>{worst.month} recorded the highest intensity at {worst.intensity} L/kg. Review factory maintenance logs and irrigation schedules.</span>
         </div>
       )}
-    </>
-  );
-}
-
-/* ── Tab: Fertilizer ──────────────────────────────────────────────────── */
-function FertilizerTab() {
-  const overdueCount = fertilizerBlocks.filter(b => b.status === 'overdue').length;
-  const dueCount = fertilizerBlocks.filter(b => b.status === 'due').length;
-  return (
-    <>
-      <div className="kpi-grid">
-        <KpiCard icon="🌱" iconBg="kpi-icon-green" label="Total Blocks Tracked" value={fertilizerBlocks.length} unit="" />
-        <KpiCard icon="✅" iconBg="kpi-icon-green" label="OK — No Action"   value={fertilizerBlocks.filter(b => b.status === 'ok').length} unit="" />
-        <KpiCard icon="⚠️" iconBg="kpi-icon-amber" label="Due This Week"    value={dueCount}    unit="" />
-        <KpiCard icon="🚨" iconBg="kpi-icon-amber" label="Overdue"          value={overdueCount} unit="" delta={overdueCount > 0 ? overdueCount : undefined} />
-      </div>
-
-      {overdueCount > 0 && (
-        <div className="alert alert-danger" style={{ marginBottom: 'var(--space-6)' }}>
-          <span>🚨</span>
-          <span><strong>{overdueCount} blocks</strong> are overdue for fertilizer application. Delays can reduce yield and soil quality. Apply immediately.</span>
-        </div>
-      )}
-
 
       {/* ── Edit Modal ── */}
       {editRow && (
@@ -1309,7 +1143,7 @@ function FertilizerTab() {
               onSaved={() => {
                 setEditRow(null);
                 setLoading(true);
-                apiService.getWaterUsage(token, 2026).then(usage => {
+                apiService.getWaterUsage(token, CURRENT_YEAR).then(usage => {
                   const formatted = usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' }));
                   setWaterData(formatted);
                 }).finally(() => setLoading(false));
@@ -1335,7 +1169,7 @@ function FertilizerTab() {
                     await apiService.deleteWaterUsage(token, deleteRow.id);
                     setDeleteRow(null);
                     setLoading(true);
-                    const usage = await apiService.getWaterUsage(token, 2026);
+                    const usage = await apiService.getWaterUsage(token, CURRENT_YEAR);
                     setWaterData(usage.map(w => ({ month: w.month, estate: w.estate, id: w.id, water_m3: w.water_m3, yield_kg: w.yield_kg, intensity: w.intensity_l_per_kg, target, status: w.intensity_l_per_kg <= target ? 'on_track' : 'at_risk' })));
                   } catch(e) { console.error(e); }
                   finally { setLoading(false); }
@@ -1348,7 +1182,6 @@ function FertilizerTab() {
           </div>
         </div>
       )}
-
     </>
   );
 }
@@ -3599,6 +3432,11 @@ function UserManagementTab() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
 
+  // Scheduler status
+  const [schedStatus, setSchedStatus]     = useState(null);
+  const [schedLoading, setSchedLoading]   = useState(false);
+  const [schedError, setSchedError]       = useState('');
+
   // Modal state
   const [modal, setModal]       = useState(false);
   const [form, setForm]         = useState({ full_name: '', email: '', password: '', role: 'manager', estate_id: '' });
@@ -3623,7 +3461,19 @@ function UserManagementTab() {
     }
   };
 
-  useEffect(() => { if (token) load(); }, [token]);
+  const loadSchedStatus = async () => {
+    setSchedLoading(true); setSchedError('');
+    try {
+      const data = await apiService.getSchedulerStatus(token);
+      setSchedStatus(data);
+    } catch (e) {
+      setSchedError(e.message);
+    } finally {
+      setSchedLoading(false);
+    }
+  };
+
+  useEffect(() => { if (token) { load(); loadSchedStatus(); } }, [token]);
 
   const openModal = () => {
     setForm({ full_name: '', email: '', password: '', role: 'manager', estate_id: '' });
@@ -3721,6 +3571,122 @@ function UserManagementTab() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* ── Scheduler Status Card ── */}
+      <div style={{ marginTop: 'var(--space-6)' }}>
+        <div className="table-wrap" style={{ padding: '20px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div>
+              <div className="table-title">Monthly Labour Scheduler</div>
+              <div className="table-subtitle">Runs automatically on the 1st of each month at 09:50 (Asia/Colombo)</div>
+            </div>
+            <button
+              onClick={loadSchedStatus}
+              disabled={schedLoading}
+              style={{
+                padding: '6px 14px', borderRadius: 8, border: '1px solid var(--color-border)',
+                background: 'var(--color-surface-2)', color: 'var(--color-text)', cursor: 'pointer',
+                fontSize: '0.8125rem', fontWeight: 600, opacity: schedLoading ? 0.6 : 1,
+              }}
+            >
+              {schedLoading ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {schedError && (
+            <div className="alert alert-warning" style={{ marginBottom: 12 }}>
+              <span>⚠️</span><span>{schedError}</span>
+            </div>
+          )}
+
+          {schedStatus ? (() => {
+            const job     = schedStatus.jobs?.[0];
+            const lastRun = schedStatus.last_run || {};
+            const statusColor = {
+              ok:      'var(--color-success)',
+              skipped: 'var(--color-warning)',
+              error:   'var(--color-danger)',
+            };
+            const statusIcon = { ok: '✅', skipped: '⏭️', error: '❌' };
+
+            const fmtLocal = (iso) => {
+              if (!iso) return '—';
+              try { return new Date(iso).toLocaleString(); } catch { return iso; }
+            };
+
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                {/* Running state */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: schedStatus.running ? 'var(--color-success)' : 'var(--color-danger)',
+                      display: 'inline-block', flexShrink: 0,
+                    }} />
+                    <span style={{ fontWeight: 700, fontSize: '1rem' }}>
+                      {schedStatus.running ? 'Running' : 'Stopped'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                    Timezone: {schedStatus.timezone}
+                  </div>
+                </div>
+
+                {/* Next fire */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Next Run</div>
+                  <div style={{ fontWeight: 700, fontSize: '0.9375rem', lineHeight: 1.3 }}>
+                    {job ? fmtLocal(job.next_run_local) : '—'}
+                  </div>
+                  {job && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                      {job.trigger}
+                    </div>
+                  )}
+                </div>
+
+                {/* Last run */}
+                <div style={{
+                  background: 'var(--color-surface-2)', borderRadius: 10,
+                  border: '1px solid var(--color-border)', padding: '16px 20px',
+                }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last Run</div>
+                  {lastRun.fired_at ? (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span>{statusIcon[lastRun.status] || '❓'}</span>
+                        <span style={{ fontWeight: 700, color: statusColor[lastRun.status] || 'inherit' }}>
+                          {lastRun.status?.toUpperCase() || 'Unknown'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                        {fmtLocal(lastRun.fired_at)}
+                      </div>
+                      {lastRun.detail && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4, fontStyle: 'italic' }}>
+                          {lastRun.detail}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontWeight: 600, color: 'var(--color-text-muted)' }}>No runs recorded</div>
+                  )}
+                </div>
+              </div>
+            );
+          })() : (
+            !schedLoading && <div style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>No scheduler data available.</div>
+          )}
+        </div>
       </div>
 
       {/* ── Add User Modal ── */}
