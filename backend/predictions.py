@@ -1,98 +1,185 @@
-"""Heuristic monthly yield prediction for the labour planner.
-
-There is no trained ML model in the repo yet; the ``yield_prediction`` table is
-populated by this lightweight forecaster, derived from the block's historical
-``block_yield_record`` rows. It is intentionally simple and deterministic so the
-monthly labour generator always has an expected yield per block to plan around.
-
-When a block has no history we fall back to ``worker_capacity * 600`` — the same
-constant the planner used before predictions existed — so a plan is never empty.
+"""
+Yield predictions module — calls the FastAPI ML service.
+Falls back to heuristic if FastAPI is unavailable (FR-LAO-03).
 """
 import logging
+import os
+import requests
 from decimal import Decimal
+from flask import Blueprint, jsonify, request
+from auth import token_required, get_db_connection
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-MODEL_VERSION = 'heuristic_v1'
-FALLBACK_KG_PER_WORKER = 600.0   # legacy constant: capacity * 600
-CONFIDENCE_BAND = 0.15           # ±15% interval
-RECENT_WINDOW = 6                # months averaged when no same-month-last-year
+predictions_bp = Blueprint('predictions', __name__)
 
+FASTAPI_URL = os.getenv('FASTAPI_URL', 'http://localhost:8000')
+MODEL_VERSION = 'xgboost_v1'
+FALLBACK_MODEL_VERSION = 'heuristic_v1_fallback'
+CONFIDENCE_BAND = 0.10
+FALLBACK_KG_PER_WORKER = 600.0
+RECENT_WINDOW = 6
+
+
+# =============================================================================
+# Heuristic fallback (used when FastAPI is unavailable)
+# =============================================================================
 
 def _f(v):
     return float(v) if isinstance(v, Decimal) else v
 
 
-def _forecast(history, worker_capacity, year, month):
-    """Return (predicted_kg, used_fallback) for one block.
-
-    history: list of (year, month, yield_kg) sorted ascending.
-    Strategy:
-      1. Prefer the same month last year (strong seasonal signal for tea).
-      2. Else mean of the most recent RECENT_WINDOW records, nudged by the
-         month-over-month trend of the last two records.
-      3. Else fall back to capacity * 600.
-    """
+def _heuristic_forecast(history, worker_capacity, year, month):
     if not history:
-        return round(worker_capacity * FALLBACK_KG_PER_WORKER, 3), True
-
+        return round(worker_capacity * FALLBACK_KG_PER_WORKER, 3)
     same_month_last_year = next(
         (y for (yr, mo, y) in history if yr == year - 1 and mo == month), None
     )
     if same_month_last_year is not None:
-        return round(_f(same_month_last_year), 3), False
-
+        return round(_f(same_month_last_year), 3)
     recent = [_f(y) for (_, _, y) in history[-RECENT_WINDOW:]]
     base = sum(recent) / len(recent)
+    trend = (recent[-1] - recent[-2]) if len(recent) >= 2 else 0.0
+    return round(max(0.0, base + trend), 3)
 
-    # light linear trend from the last two consecutive records
-    trend = 0.0
-    if len(recent) >= 2:
-        trend = recent[-1] - recent[-2]
 
-    predicted = max(0.0, base + trend)
-    return round(predicted, 3), False
+# =============================================================================
+# ML prediction via FastAPI
+# =============================================================================
+
+def _call_fastapi(blocks_payload, year, month):
+    """Call FastAPI /predict-batch. Returns list of predictions or None on failure."""
+    try:
+        response = requests.post(
+            f"{FASTAPI_URL}/predict-batch",
+            json={"blocks": blocks_payload, "year": year, "month": month},
+            timeout=10
+        )
+        if response.status_code == 200:
+            return response.json().get("predictions", [])
+        logger.warning("FastAPI returned %s", response.status_code)
+        return None
+    except Exception as e:
+        logger.warning("FastAPI unavailable: %s", e)
+        return None
 
 
 def compute_block_predictions(cur, estate_id, year, month):
-    """Compute + upsert yield predictions for every block of an estate.
-
-    Writes one row per block into ``yield_prediction`` (upsert on
-    block_id/year/month) and returns ``{ block_id(str): predicted_yield_kg }``.
-
-    The caller owns the transaction (we do not commit here).
     """
-    cur.execute(
-        "SELECT id, worker_capacity FROM block WHERE estate_id = %s ORDER BY block_code",
-        (estate_id,),
-    )
+    Compute + upsert yield predictions for every block of an estate.
+    Tries FastAPI ML model first, falls back to heuristic if unavailable.
+    Returns { block_id(str): predicted_yield_kg }
+    """
+    # Fetch all blocks with their ML features
+    cur.execute("""
+        SELECT b.id, b.block_code, b.zone, b.elevation_m, b.area_hectares,
+               b.soil_type, b.growth_stage, b.bush_age_yrs, b.worker_capacity,
+               ft.code AS last_fertilizer_type,
+               EXTRACT(DAY FROM NOW() - MAX(fa.application_date))::INT AS days_since_fertilized
+        FROM block b
+        LEFT JOIN fertilizer_application fa ON fa.block_id = b.id
+        LEFT JOIN fertilizer_type ft ON ft.id = fa.fertilizer_type_id
+        WHERE b.estate_id = %s
+        GROUP BY b.id, b.block_code, b.zone, b.elevation_m, b.area_hectares,
+                 b.soil_type, b.growth_stage, b.bush_age_yrs, b.worker_capacity, ft.code
+        ORDER BY b.block_code
+    """, (estate_id,))
     blocks = cur.fetchall()
+    print(f"DEBUG: blocks found = {len(blocks)}")
 
-    predictions = {}
-    for block_id, worker_capacity in blocks:
-        # Only use history STRICTLY BEFORE the target month — a forecast must
-        # not peek at the month it is predicting (or any later actuals), or a
-        # stray same-month record skews the trend and zeroes the prediction.
-        cur.execute(
-            """
-            SELECT year, month, yield_kg
-            FROM block_yield_record
-            WHERE block_id = %s
-              AND (year < %s OR (year = %s AND month < %s))
-            ORDER BY year, month
-            """,
-            (block_id, year, year, month),
-        )
+    # Fetch estate weather for this month
+    cur.execute("""
+        SELECT rainfall_mm, avg_temp_c, avg_humidity_pct
+        FROM estate_weather
+        WHERE estate_id = %s AND year = %s AND month = %s
+    """, (estate_id, year, month))
+    weather_row = cur.fetchone()
+    weather = {
+        "rainfall_mm": float(weather_row[0]) if weather_row else 185.0,
+        "avg_temp_c": float(weather_row[1]) if weather_row else 22.4,
+        "avg_humidity_pct": float(weather_row[2]) if weather_row else 78.0,
+    }
+
+    # Build FastAPI payload
+    blocks_payload = []
+    block_meta = {}
+
+    for row in blocks:
+        (block_id, block_code, zone, elevation_m, area_hectares,
+         soil_type, growth_stage, bush_age_yrs, worker_capacity,
+         last_fertilizer_type, days_since_fertilized) = row
+
+        # Get last month's yield
+        cur.execute("""
+            SELECT yield_kg FROM block_yield_record
+            WHERE block_id = %s AND (year * 12 + month) < (%s * 12 + %s)
+            ORDER BY year DESC, month DESC LIMIT 1
+        """, (block_id, year, month))
+        last_yield_row = cur.fetchone()
+        yield_last_month = float(last_yield_row[0]) if last_yield_row else None
+
+        # Get history for fallback
+        cur.execute("""
+            SELECT year, month, yield_kg FROM block_yield_record
+            WHERE block_id = %s ORDER BY year, month
+        """, (block_id,))
+
         history = cur.fetchall()
 
-        predicted, used_fallback = _forecast(
-            history, worker_capacity or 15, year, month
-        )
-        low = round(predicted * (1 - CONFIDENCE_BAND), 3)
-        high = round(predicted * (1 + CONFIDENCE_BAND), 3)
+        block_meta[str(block_id)] = {
+            "worker_capacity": worker_capacity or 15,
+            "history": history,
+            "block_code": block_code,
+        }
 
-        cur.execute(
-            """
+        blocks_payload.append({
+            "block_id": str(block_id),
+            "zone": zone or "Mid",
+            "elevation_m": int(elevation_m) if elevation_m else 900,
+            "area_hectares": float(area_hectares) if area_hectares else 2.0,
+            "soil_type": soil_type or "Laterite",
+            "growth_stage": growth_stage or "Mature",
+            "bush_age_yrs": int(bush_age_yrs) if bush_age_yrs else 20,
+            "rainfall_mm": weather["rainfall_mm"],
+            "avg_temp_c": weather["avg_temp_c"],
+            "avg_humidity_pct": weather["avg_humidity_pct"],
+            "days_since_fertilized": int(days_since_fertilized) if days_since_fertilized else 45,
+            "last_fertilizer_type": last_fertilizer_type or "EP_GOLD",
+            "yield_last_month": yield_last_month,
+        })
+
+    # Try FastAPI first
+    ml_predictions = _call_fastapi(blocks_payload, year, month)
+    used_ml = ml_predictions is not None
+
+    if used_ml:
+        pred_map = {p["block_id"]: p for p in ml_predictions}
+        logger.info("Using XGBoost ML model for %d blocks", len(blocks))
+    else:
+        logger.warning("FastAPI unavailable — using heuristic fallback")
+
+    # Upsert predictions
+    predictions = {}
+    for bp in blocks_payload:
+        block_id = bp["block_id"]
+        meta = block_meta[block_id]
+
+        if used_ml and block_id in pred_map:
+            p = pred_map[block_id]
+            predicted = round(float(p["predicted_yield_kg"]), 3)
+            low = round(float(p["confidence_low"]), 3)
+            high = round(float(p["confidence_high"]), 3)
+            version = MODEL_VERSION
+        else:
+            predicted = _heuristic_forecast(
+                meta["history"], meta["worker_capacity"], year, month
+            )
+            low = round(predicted * (1 - CONFIDENCE_BAND), 3)
+            high = round(predicted * (1 + CONFIDENCE_BAND), 3)
+            version = FALLBACK_MODEL_VERSION
+
+        cur.execute("""
             INSERT INTO yield_prediction
                 (block_id, year, month, predicted_yield_kg,
                  confidence_low, confidence_high, model_version)
@@ -103,14 +190,88 @@ def compute_block_predictions(cur, estate_id, year, month):
                 confidence_high    = EXCLUDED.confidence_high,
                 model_version      = EXCLUDED.model_version,
                 created_at         = NOW()
-            """,
-            (block_id, year, month, predicted, low, high,
-             MODEL_VERSION + ('_fallback' if used_fallback else '')),
-        )
-        predictions[str(block_id)] = predicted
+        """, (block_id, year, month, predicted, low, high, version))
 
-    logger.info(
-        "Computed %d block predictions for estate %s (%d-%02d)",
-        len(predictions), estate_id, year, month,
-    )
+        predictions[block_id] = predicted
+
+    logger.info("Computed %d predictions for estate %s (%d-%02d) using %s",
+                len(predictions), estate_id, year, month,
+                "ML model" if used_ml else "heuristic fallback")
     return predictions
+
+
+# =============================================================================
+# API Endpoint: GET /labour/predictions
+# =============================================================================
+
+@predictions_bp.route('/labour/predictions', methods=['GET'])
+@token_required
+def get_predictions():
+    """
+    GET /labour/predictions?estate_id=&year=&month=
+    Returns stored predictions from yield_prediction table.
+    If none exist, triggers computation first.
+    """
+    estate_id = request.args.get('estate_id')
+    year = int(request.args.get('year', 2026))
+    month = int(request.args.get('month', 6))
+
+    if not estate_id:
+        return jsonify({'error': 'estate_id is required'}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    try:
+        with conn.cursor() as cur:
+            # Check if predictions exist
+            cur.execute("""
+                SELECT yp.id, b.block_code, yp.predicted_yield_kg,
+                       yp.confidence_low, yp.confidence_high, yp.model_version
+                FROM yield_prediction yp
+                JOIN block b ON b.id = yp.block_id
+                WHERE b.estate_id = %s AND yp.year = %s AND yp.month = %s
+                ORDER BY b.block_code
+            """, (estate_id, year, month))
+            rows = cur.fetchall()
+            print(f"DEBUG: rows={len(rows)} estate={estate_id} year={year} month={month}")
+            logger.info("Existing rows: %d for estate %s year %s month %s", len(rows), estate_id, year, month)
+
+            # If no predictions exist, compute them now
+            if not rows:
+                logger.info("No predictions found — computing now")
+                compute_block_predictions(cur, estate_id, year, month)
+                conn.commit()
+
+                cur.execute("""
+                    SELECT yp.id, b.block_code, yp.predicted_yield_kg,
+                           yp.confidence_low, yp.confidence_high, yp.model_version
+                    FROM yield_prediction yp
+                    JOIN block b ON b.id = yp.block_id
+                    WHERE b.estate_id = %s AND yp.year = %s AND yp.month = %s
+                    ORDER BY b.block_code
+                """, (estate_id, year, month))
+                rows = cur.fetchall()
+                print(f"DEBUG: rows={len(rows)} estate={estate_id} year={year} month={month}")
+
+            result = []
+            for row in rows:
+                pred_id, block_code, predicted, low, high, version = row
+                result.append({
+                    "block_id": str(pred_id),
+                    "block_code": block_code,
+                    "predicted_yield_kg": float(predicted),
+                    "confidence_low": float(low),
+                    "confidence_high": float(high),
+                    "model_version": version,
+                })
+
+            return jsonify(result), 200
+
+    except Exception as e:
+        conn.rollback()
+        logger.error("Predictions error: %s", e, exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()

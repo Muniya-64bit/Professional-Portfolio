@@ -3347,7 +3347,6 @@ function LabourTab() {
   );
 }
 
-/* ── Tab: Yield Predictions ──────────────────────────────────────────────── */
 function YieldPredictionTab() {
   const { token } = useAuth();
   const [estates, setEstates] = useState([]);
@@ -3358,132 +3357,127 @@ function YieldPredictionTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Load estates on mount
   useEffect(() => {
     if (!token) return;
     apiService.getEstates(token)
       .then(data => {
         setEstates(data);
-        if (data.length > 0) {
-          setEstateId(data[0].id);
-        }
+        if (data.length > 0) setEstateId(data[0].id);
       })
       .catch(err => setError('Failed to load estates: ' + err.message));
   }, [token]);
 
-  // Load predictions when estate/month changes
-  useEffect(() => {
-    if (!token || !estateId) {
-      setPredictions([]);
-      return;
-    }
+  const fetchPredictions = () => {
+    if (!token || !estateId) return;
     setLoading(true);
     setError('');
-    const params = { estateId, year, month };
-    apiService.getPredictions(token, params)
+    setPredictions([]);
+    apiService.getPredictions(token, { estateId, year, month })
       .then(data => {
-        if (Array.isArray(data)) {
-          setPredictions(data);
-        } else {
-          setPredictions([]);
-          setError('Invalid response format');
-        }
+        if (Array.isArray(data)) setPredictions(data);
+        else { setPredictions([]); setError('Invalid response format'); }
       })
-      .catch(e => {
-        setError('Error loading predictions: ' + (e.message || 'Unknown error'));
-        setPredictions([]);
-      })
+      .catch(e => { setError('Error loading predictions: ' + (e.message || 'Unknown error')); setPredictions([]); })
       .finally(() => setLoading(false));
-  }, [token, estateId, year, month]);
+  };
 
-  const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const estate = estates.find(e => e.id === estateId);
+  const sortedPredictions = [...predictions].sort((a, b) => (b.predicted_yield_kg || 0) - (a.predicted_yield_kg || 0));
 
-  // Sort by predicted yield
-  const sortedPredictions = [...predictions].sort((a, b) =>
-    (b.predicted_yield_kg || 0) - (a.predicted_yield_kg || 0)
-  );
-
-  // Calculate summary stats
-  const totalPredicted = predictions.reduce((sum, p) => sum + (p.predicted_yield_kg || 0), 0);
-  const avgPredicted = predictions.length > 0 ? totalPredicted / predictions.length : 0;
-  const maxPredicted = predictions.length > 0 ? Math.max(...predictions.map(p => p.predicted_yield_kg || 0)) : 0;
-  const minPredicted = predictions.length > 0 ? Math.min(...predictions.map(p => p.predicted_yield_kg || 0)) : 0;
-
-  const totalConfidenceLow = predictions.reduce((sum, p) => sum + (p.confidence_low || 0), 0);
-  const totalConfidenceHigh = predictions.reduce((sum, p) => sum + (p.confidence_high || 0), 0);
-  const avgConfidenceRange = totalPredicted > 0
-    ? Math.round(((totalConfidenceHigh - totalConfidenceLow) / totalPredicted) * 100)
-    : 0;
+  const totalPredicted   = predictions.reduce((s, p) => s + (p.predicted_yield_kg || 0), 0);
+  const avgPredicted     = predictions.length > 0 ? totalPredicted / predictions.length : 0;
+  const maxPredicted     = predictions.length > 0 ? Math.max(...predictions.map(p => p.predicted_yield_kg || 0)) : 0;
+  const totalConfLow     = predictions.reduce((s, p) => s + (p.confidence_low || 0), 0);
+  const totalConfHigh    = predictions.reduce((s, p) => s + (p.confidence_high || 0), 0);
+  const avgConfRange     = totalPredicted > 0 ? Math.round(((totalConfHigh - totalConfLow) / totalPredicted) * 100) : 0;
+  const modelVersion     = predictions.length > 0 ? predictions[0].model_version : null;
+  const usingML          = modelVersion && modelVersion.includes('xgboost');
 
   return (
     <>
-      {/* ── Controls ── */}
+      {/* Controls */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 'var(--space-6)' }}>
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Estate
-          </div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Estate</div>
           <select value={estateId} onChange={e => setEstateId(e.target.value)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem' }}>
             {estates.length === 0 && <option value="">Loading…</option>}
             {estates.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         </div>
-
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Month
-          </div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Month</div>
           <select value={month} onChange={e => setMonth(parseInt(e.target.value))} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem' }}>
             {MONTH_NAMES.map((name, idx) => <option key={idx} value={idx + 1}>{name}</option>)}
           </select>
         </div>
-
         <div>
-          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Year
-          </div>
+          <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Year</div>
           <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} min="2020" max="2030" style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.9375rem', width: 80 }} />
         </div>
+        <div style={{ alignSelf: 'flex-end' }}>
+          <button
+            onClick={fetchPredictions}
+            disabled={loading || !estateId}
+            style={{
+              padding: '9px 20px',
+              borderRadius: 8,
+              border: 'none',
+              background: 'var(--color-primary)',
+              color: '#fff',
+              fontWeight: 700,
+              fontSize: '0.9375rem',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? '⏳ Predicting…' : '🔮 Get Predictions'}
+          </button>
+        </div>
+        {/* Model version badge */}
+        {modelVersion && (
+          <div style={{ marginLeft: 'auto', alignSelf: 'flex-end' }}>
+            <span className={`badge ${usingML ? 'badge-success' : 'badge-warning'}`}>
+              {usingML ? '🤖 XGBoost ML Model' : '📊 Heuristic Fallback'}
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* ── Error ── */}
+      {/* Error */}
       {error && (
         <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(220,38,38,0.08)', color: 'var(--color-danger)', marginBottom: 20, fontSize: '0.875rem', border: '1px solid rgba(220,38,38,0.2)' }}>
           {error}
         </div>
       )}
 
-      {/* ── Summary Cards ── */}
+      {/* Summary Cards */}
       {!loading && predictions.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
           <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Total Predicted</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{(totalPredicted / 1000).toFixed(1)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>{predictions.length} blocks</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{Math.round(totalPredicted).toLocaleString()}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>{predictions.length} blocks · kg</div>
           </div>
-
           <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Average Per Block</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{(avgPredicted / 1000).toFixed(2)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Mean yield</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>{Math.round(avgPredicted).toLocaleString()}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>kg / block</div>
           </div>
-
           <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Range</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-success)' }}>{(maxPredicted / 1000).toFixed(2)}t</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Max: {(maxPredicted / 1000).toFixed(2)}t</div>
+            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Highest Block</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-success)' }}>{Math.round(maxPredicted).toLocaleString()}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>{sortedPredictions[0]?.block_code} · kg</div>
           </div>
-
           <div style={{ padding: '16px', borderRadius: 10, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
             <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Confidence Range</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>±{avgConfidenceRange}%</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Low to High</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--color-primary)' }}>±{avgConfRange}%</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Model uncertainty</div>
           </div>
         </div>
       )}
 
-      {/* ── Loading ── */}
+      {/* Loading */}
       {loading && (
         <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)' }}>
           <div style={{ fontSize: '2rem', marginBottom: 12 }}>🔮</div>
@@ -3492,25 +3486,14 @@ function YieldPredictionTab() {
         </div>
       )}
 
-      {/* ── Charts ── */}
+      {/* Bar Chart */}
       {!loading && predictions.length > 0 && (
         <>
-          {/* Bar Chart: Predicted Yield by Block */}
           <div style={{ marginBottom: 'var(--space-6)' }}>
             <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: 'var(--space-4)' }}>
-              📊 Predicted Yield by Block
+              📊 Predicted Yield by Block (kg)
             </div>
-            <div style={{
-              background: 'var(--color-surface-2)',
-              borderRadius: 10,
-              border: '1px solid var(--color-border)',
-              padding: '20px',
-              minHeight: 300,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'flex-end',
-            }}>
-              {/* Simplified Bar Chart */}
+            <div style={{ background: 'var(--color-surface-2)', borderRadius: 10, border: '1px solid var(--color-border)', padding: '20px', minHeight: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 250, justifyContent: 'space-around' }}>
                 {sortedPredictions.slice(0, 12).map(pred => {
                   const maxYield = Math.max(...sortedPredictions.map(p => p.predicted_yield_kg || 0));
@@ -3518,93 +3501,53 @@ function YieldPredictionTab() {
                   const color = pred.predicted_yield_kg > maxYield * 0.7 ? 'var(--color-success)' : 'var(--color-primary)';
                   return (
                     <div key={pred.block_id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 }}>
-                      <div title={`${(pred.predicted_yield_kg / 1000).toFixed(2)}t`}
-                        style={{
-                          width: '100%',
-                          height: barHeight,
-                          background: color,
-                          borderRadius: '4px 4px 0 0',
-                          opacity: 0.8,
-                          transition: 'opacity 0.2s',
-                          cursor: 'pointer',
-                        }}
+                      <div
+                        title={`${pred.block_code}: ${Math.round(pred.predicted_yield_kg).toLocaleString()} kg`}
+                        style={{ width: '100%', height: barHeight, background: color, borderRadius: '4px 4px 0 0', opacity: 0.8, transition: 'opacity 0.2s', cursor: 'pointer' }}
                         onMouseEnter={e => e.target.style.opacity = 1}
                         onMouseLeave={e => e.target.style.opacity = 0.8}
                       />
-                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>
-                        {pred.block_code}
-                      </div>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>{pred.block_code}</div>
                     </div>
                   );
                 })}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 12, textAlign: 'center' }}>
-                Top 12 blocks by predicted yield (in tonnes)
+                Blocks sorted by predicted yield · hover for exact kg
               </div>
             </div>
           </div>
 
-          {/* Confidence Range Visualization */}
+          {/* Confidence Range Bars */}
           <div style={{ marginBottom: 'var(--space-6)' }}>
             <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: 'var(--space-4)' }}>
-              📈 Confidence Ranges (Low to High Estimate)
+              📈 Confidence Ranges per Block
             </div>
-            <div style={{
-              background: 'var(--color-surface-2)',
-              borderRadius: 10,
-              border: '1px solid var(--color-border)',
-              padding: '20px',
-            }}>
+            <div style={{ background: 'var(--color-surface-2)', borderRadius: 10, border: '1px solid var(--color-border)', padding: '20px' }}>
               {sortedPredictions.slice(0, 8).map(pred => {
-                const pred_kg = pred.predicted_yield_kg || 0;
-                const low_kg = pred.confidence_low || 0;
-                const high_kg = pred.confidence_high || 0;
-                const maxEstimate = Math.max(...sortedPredictions.map(p => p.confidence_high || 0));
-
-                const predPercent = (pred_kg / maxEstimate) * 100;
-                const lowPercent = (low_kg / maxEstimate) * 100;
-                const highPercent = (high_kg / maxEstimate) * 100;
-
+                const pred_kg  = pred.predicted_yield_kg || 0;
+                const low_kg   = pred.confidence_low || 0;
+                const high_kg  = pred.confidence_high || 0;
+                const maxEst   = Math.max(...sortedPredictions.map(p => p.confidence_high || 0));
+                const predPct  = (pred_kg / maxEst) * 100;
+                const lowPct   = (low_kg  / maxEst) * 100;
+                const highPct  = (high_kg / maxEst) * 100;
                 return (
                   <div key={pred.block_id} style={{ marginBottom: 16 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                       <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{pred.block_code}</span>
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                        {(pred_kg / 1000).toFixed(2)}t
+                        {Math.round(pred_kg).toLocaleString()} kg
                       </span>
                     </div>
                     <div style={{ position: 'relative', height: 24, background: 'var(--color-surface-3)', borderRadius: 4, overflow: 'hidden' }}>
-                      {/* Low estimate */}
-                      <div style={{
-                        position: 'absolute',
-                        left: 0,
-                        width: `${lowPercent}%`,
-                        height: '100%',
-                        background: 'rgba(34,197,94,0.3)',
-                        borderRadius: 4,
-                      }} />
-                      {/* Predicted */}
-                      <div style={{
-                        position: 'absolute',
-                        left: 0,
-                        width: `${predPercent}%`,
-                        height: '100%',
-                        background: 'var(--color-primary)',
-                        borderRadius: 4,
-                      }} />
-                      {/* High estimate */}
-                      <div style={{
-                        position: 'absolute',
-                        left: `${predPercent}%`,
-                        width: `${highPercent - predPercent}%`,
-                        height: '100%',
-                        background: 'rgba(34,197,94,0.2)',
-                        borderRadius: 4,
-                      }} />
+                      <div style={{ position: 'absolute', left: 0, width: `${lowPct}%`, height: '100%', background: 'rgba(34,197,94,0.3)', borderRadius: 4 }} />
+                      <div style={{ position: 'absolute', left: 0, width: `${predPct}%`, height: '100%', background: 'var(--color-primary)', borderRadius: 4 }} />
+                      <div style={{ position: 'absolute', left: `${predPct}%`, width: `${highPct - predPct}%`, height: '100%', background: 'rgba(34,197,94,0.2)', borderRadius: 4 }} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-                      <span>{(low_kg / 1000).toFixed(2)}t</span>
-                      <span>{(high_kg / 1000).toFixed(2)}t</span>
+                      <span>{Math.round(low_kg).toLocaleString()} kg</span>
+                      <span>{Math.round(high_kg).toLocaleString()} kg</span>
                     </div>
                   </div>
                 );
@@ -3614,7 +3557,7 @@ function YieldPredictionTab() {
         </>
       )}
 
-      {/* ── Predictions Table ── */}
+      {/* Table */}
       {!loading && predictions.length > 0 && (
         <div className="table-wrap">
           <div className="table-header-bar">
@@ -3622,40 +3565,41 @@ function YieldPredictionTab() {
               <div className="table-title">Block Yield Predictions</div>
               <div className="table-subtitle">{MONTH_NAMES[month - 1]} {year} · {estate?.name}</div>
             </div>
-            <span className="badge badge-neutral">{predictions.length} blocks</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {modelVersion && (
+                <span className={`badge ${usingML ? 'badge-success' : 'badge-warning'}`}>
+                  {usingML ? '🤖 XGBoost' : '📊 Heuristic'}
+                </span>
+              )}
+              <span className="badge badge-neutral">{predictions.length} blocks</span>
+            </div>
           </div>
-
           <table>
             <thead>
               <tr>
                 <th>Block</th>
-                <th>Predicted Yield (kg)</th>
-                <th>Confidence Range</th>
+                <th>Predicted Yield</th>
+                <th>Confidence</th>
                 <th>Low Estimate</th>
                 <th>High Estimate</th>
               </tr>
             </thead>
             <tbody>
               {sortedPredictions.map(pred => {
-                const pred_kg = pred.predicted_yield_kg || 0;
-                const low_kg = pred.confidence_low || 0;
-                const high_kg = pred.confidence_high || 0;
+                const pred_kg  = pred.predicted_yield_kg || 0;
+                const low_kg   = pred.confidence_low || 0;
+                const high_kg  = pred.confidence_high || 0;
                 const rangePct = low_kg && high_kg ? Math.round(((high_kg - low_kg) / pred_kg) * 100) : 0;
+                const isHigh   = pred_kg >= maxPredicted * 0.7;
                 return (
                   <tr key={pred.block_id}>
                     <td style={{ fontWeight: 600 }}>{pred.block_code}</td>
-                    <td style={{ fontWeight: 700, fontSize: '1rem' }}>
-                      {(pred_kg / 1000).toFixed(2)}t
+                    <td style={{ fontWeight: 700, fontSize: '1rem', color: isHigh ? 'var(--color-success)' : 'var(--color-text)' }}>
+                      {Math.round(pred_kg).toLocaleString()} kg
                     </td>
-                    <td style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-primary)' }}>
-                      ±{rangePct}%
-                    </td>
-                    <td style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-                      {(low_kg / 1000).toFixed(2)}t
-                    </td>
-                    <td style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-                      {(high_kg / 1000).toFixed(2)}t
-                    </td>
+                    <td style={{ fontWeight: 600, color: 'var(--color-primary)' }}>±{rangePct}%</td>
+                    <td style={{ color: 'var(--color-text-muted)' }}>{Math.round(low_kg).toLocaleString()} kg</td>
+                    <td style={{ color: 'var(--color-text-muted)' }}>{Math.round(high_kg).toLocaleString()} kg</td>
                   </tr>
                 );
               })}
@@ -3664,14 +3608,12 @@ function YieldPredictionTab() {
         </div>
       )}
 
-      {/* ── Empty State ── */}
+      {/* Empty State */}
       {!loading && predictions.length === 0 && !error && (
         <div style={{ padding: 48, textAlign: 'center', background: 'var(--color-surface-2)', borderRadius: 14, border: '1px solid var(--color-border)' }}>
           <div style={{ fontSize: '2rem', marginBottom: 10 }}>📊</div>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>No predictions for {MONTH_NAMES[month - 1]} {year}</div>
-          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-            Try a different month or estate, or ensure labour plans have been generated
-          </div>
+          <div style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Select an estate and month to view ML yield predictions</div>
         </div>
       )}
     </>

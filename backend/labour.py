@@ -738,42 +738,74 @@ def generate_monthly():
 @labour_bp.route('/predictions', methods=['GET'])
 @token_required
 def list_predictions():
-    """GET /api/labour/predictions  ?estate_id=  &year=  &month="""
+    from predictions import compute_block_predictions
+
     estate_id, err = effective_estate_id(request.args.get('estate_id'))
     if err:
         return err
-    year      = request.args.get('year')
-    month     = request.args.get('month')
+    year  = int(request.args.get('year',  2026))
+    month = int(request.args.get('month', 6))
 
     conn = _db()
     if not conn:
         return jsonify({'error': 'Database unavailable'}), 503
+
     try:
         with conn.cursor() as cur:
-            sql = """
+            cur.execute("""
                 SELECT yp.id, yp.block_id, b.block_code, yp.year, yp.month,
                        yp.predicted_yield_kg, yp.confidence_low, yp.confidence_high,
                        yp.model_version, yp.labour_plan_id, b.estate_id
                 FROM yield_prediction yp
                 JOIN block b ON b.id = yp.block_id
-            """
-            where, params = [], []
-            if estate_id:
-                where.append("b.estate_id = %s"); params.append(estate_id)
-            if year:
-                where.append("yp.year = %s");  params.append(int(year))
-            if month:
-                where.append("yp.month = %s"); params.append(int(month))
-            if where:
-                sql += " WHERE " + " AND ".join(where)
-            sql += " ORDER BY b.block_code"
-            cur.execute(sql, params)
-            return jsonify(_rows(cur)), 200
+                WHERE b.estate_id = %s AND yp.year = %s AND yp.month = %s
+                ORDER BY b.block_code
+            """, (estate_id, year, month))
+            rows = cur.fetchall()
+            columns = [d[0] for d in cur.description]
+            print(f"DEBUG labour.py: existing rows={len(rows)}")
+
+            if not rows:
+                print(f"DEBUG labour.py: computing predictions...")
+                compute_block_predictions(cur, estate_id, year, month)
+                conn.commit()
+                cur.execute("""
+                    SELECT yp.id, yp.block_id, b.block_code, yp.year, yp.month,
+                           yp.predicted_yield_kg, yp.confidence_low, yp.confidence_high,
+                           yp.model_version, yp.labour_plan_id, b.estate_id
+                    FROM yield_prediction yp
+                    JOIN block b ON b.id = yp.block_id
+                    WHERE b.estate_id = %s AND yp.year = %s AND yp.month = %s
+                    ORDER BY b.block_code
+                """, (estate_id, year, month))
+                rows = cur.fetchall()
+                columns = [d[0] for d in cur.description]
+                print(f"DEBUG labour.py: after compute rows={len(rows)}")
+
+            result = []
+            for row in rows:
+                d = {}
+                for i, col in enumerate(columns):
+                    v = row[i]
+                    from decimal import Decimal
+                    from uuid import UUID
+                    from datetime import date, datetime
+                    if isinstance(v, Decimal):
+                        d[col] = float(v)
+                    elif isinstance(v, UUID):
+                        d[col] = str(v)
+                    elif isinstance(v, (date, datetime)):
+                        d[col] = v.isoformat()
+                    else:
+                        d[col] = v
+                result.append(d)
+            return jsonify(result), 200
+
     except Exception as e:
+        print(f"DEBUG ERROR: {e}")
         return _db_err(e)
     finally:
         conn.close()
-
 
 # ── Block Assignments ─────────────────────────────────────────────────────────
 
